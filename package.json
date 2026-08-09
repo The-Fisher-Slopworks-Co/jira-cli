@@ -1,7 +1,7 @@
 {
   "name": "@slopworks/jira-cli",
   "version": "0.1.0",
-  "description": "Command-line client for Jira Server / Data Center: read an issue and download its attachments from the terminal.",
+  "description": "A Jira command-line client for AI agents and for old on-prem Jira.",
   "license": "AGPL-3.0-or-later",
   "repository": {
     "type": "git",
