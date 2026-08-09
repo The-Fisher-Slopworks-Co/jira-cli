@@ -5,14 +5,14 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # jira-cli
 
-A Jira command-line client for AI agents and for old on-prem Jira. It prints an
-issue as plain text on stdout — nothing to drive — and signs in with a username
-and password, which is all a Server / Data Center instance older than 8.14
-offers. Jira Cloud is not supported: it disabled cookie auth.
+A Jira command-line client for AI agents and for old on-prem Jira. Issues come
+out as plain text on stdout, with no UI in the way. It logs in with a username
+and password, which is all Server / Data Center gives you before 8.14. Jira Cloud
+won't work at all: it dropped cookie auth.
 
 ## Install
 
-Targets [Bun](https://bun.sh) ≥ 1.1.
+Needs [Bun](https://bun.sh) 1.1 or newer.
 
 ```sh
 bun add -g @slopworks/jira-cli
@@ -27,11 +27,9 @@ jira issue PROJ-123 --json
 jira download PROJ-123 --out ./attachments
 ```
 
-`jira login` puts the credentials in the OS keychain, and from then on the
-session signs itself back in whenever the cookie expires. `JIRA_URL` overrides
-the saved base URL.
-
-The session is kept in `$XDG_CONFIG_HOME/jira-cli/session.json`, mode `600`.
+`jira login` puts your credentials in the OS keychain and writes the session to
+`$XDG_CONFIG_HOME/jira-cli/session.json`, mode 600. After that it signs itself
+back in whenever the cookie expires. `JIRA_URL` overrides the saved base URL.
 
 ## Development
 
