@@ -5,19 +5,14 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # jira-cli
 
-Read a Jira Server / Data Center issue from the terminal, and download its
-attachments. It signs in with a username and password rather than an API token,
-so it works on the older on-prem instances where personal access tokens aren't
-available. Output is plain text on stdout, which makes it usable from a pipe or
-by an AI agent.
-
-Built on [`@slopworks/jira`](https://github.com/The-Fisher-Slopworks-Co/jira),
-which is its only dependency and has none of its own. Jira Cloud is not
-supported — it disabled cookie auth.
+A Jira command-line client for AI agents and for old on-prem Jira. It prints an
+issue as plain text on stdout — nothing to drive — and signs in with a username
+and password, which is all a Server / Data Center instance older than 8.14
+offers. Jira Cloud is not supported: it disabled cookie auth.
 
 ## Install
 
-Needs [Bun](https://bun.sh) ≥ 1.1: the keychain is `Bun.secrets`.
+Targets [Bun](https://bun.sh) ≥ 1.1.
 
 ```sh
 bun add -g @slopworks/jira-cli
@@ -32,20 +27,11 @@ jira issue PROJ-123 --json
 jira download PROJ-123 --out ./attachments
 ```
 
-`jira login` offers to save your credentials to the OS keychain. Once it has,
-the other commands sign in — and refresh an expired session — on their own, so
-you only run `login` again if the saved credentials stop working.
+`jira login` puts the credentials in the OS keychain, and from then on the
+session signs itself back in whenever the cookie expires. `JIRA_URL` overrides
+the saved base URL.
 
-Exit codes: `0` success, `2` usage error, `1` anything else (no session, unknown
-key, failed download). Set `JIRA_URL` to override the base URL used for the
-`Link` line.
-
-## Where things are kept
-
-| What | Where |
-|---|---|
-| Session (base URL + `JSESSIONID`) | `$XDG_CONFIG_HOME/jira-cli/session.json`, mode `600` |
-| Username and password | OS keychain, service `jira-cli` |
+The session is kept in `$XDG_CONFIG_HOME/jira-cli/session.json`, mode `600`.
 
 ## Development
 
