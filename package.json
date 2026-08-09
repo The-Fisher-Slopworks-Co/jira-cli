@@ -39,21 +39,16 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "clean": "rm -rf dist",
-    "dev": "bun run src/cli.tsx",
+    "dev": "bun run src/cli.ts",
     "prepublishOnly": "bun run clean && bun run build",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@slopworks/jira": "^0.1.0",
-    "ink": "^7.0.5",
-    "ink-text-input": "^6.0.0",
-    "react": "^19.2.7"
+    "@slopworks/jira": "^0.1.0"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",
-    "@types/react": "^19.2.16",
-    "ink-testing-library": "^4.0.0",
     "typescript": "^7.0.2"
   }
 }

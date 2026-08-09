@@ -9,7 +9,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 ```sh
 bun install
-bun test            # node:test API, run by bun test; ink-testing-library for the UI
+bun test            # the node:test API, run by bun test
 bun run typecheck   # tsc --noEmit, covers the tests too
 bun run build       # tsc -p tsconfig.build.json → dist/
 bun run dev -- help # run from source
@@ -17,7 +17,7 @@ bun run dev -- help # run from source
 
 ## Architecture
 
-`src/cli.tsx` routes `issue` / `download` / `login` and owns the exit codes.
+`src/cli.ts` routes `issue` / `download` / `login` and owns the exit codes.
 Everything under it is single-purpose:
 
 - `jira.ts` — the adapter over `@slopworks/jira`: `JiraApi` (session, issue
@@ -27,7 +27,8 @@ Everything under it is single-purpose:
 - `credentials.ts` — the OS keychain, via `Bun.secrets`.
 - `issueText.ts` — the pure formatter; `issueCmd.ts` / `downloadCmd.ts` — the
   two non-interactive command runners.
-- `login.tsx` + `components/` — the one interactive flow, in Ink.
+- `login.ts` — the one interactive flow; `prompt.ts` — the terminal input it
+  asks through.
 
 ## Gotchas
 
@@ -45,7 +46,17 @@ Everything under it is single-purpose:
   `typecheck`; `tsconfig.build.json` emits to `dist/` and excludes them. A new
   compiler option almost always belongs in the base one.
 - The commands never throw: they return a process exit code (`0` / `1`, `2` for
-  usage). Keep it that way — the tests assert on the code, not on exceptions.
+  usage, `130` interrupted). Keep it that way — the tests assert on the code, not
+  on exceptions.
+- `prompt.ts` is the only place that touches raw mode, and only for a masked
+  answer: plain questions stay in cooked mode so the terminal keeps doing echo,
+  line editing and SIGINT. Raw mode means owning Enter, backspace, Ctrl-C, Esc
+  and escape sequences by hand, so keep the masked path as small as it is. Input
+  is buffered because a chunk need not be a line — a pipe can deliver every
+  answer at once.
+- The one runtime dependency is `@slopworks/jira`, and it has none of its own.
+  Weigh a new one against that: four prompts once cost 40 packages of TUI
+  framework.
 - Fixtures stay generic. Issue keys are `PROJ-*`, statuses are English, summaries
   are invented. No real tracker data.
 - Dependabot can't regenerate `bun.lock`. Its PRs bump `package.json` only, so

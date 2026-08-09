@@ -11,8 +11,9 @@ so it works on the older on-prem instances where personal access tokens aren't
 available. Output is plain text on stdout, which makes it usable from a pipe or
 by an AI agent.
 
-Built on [`@slopworks/jira`](https://github.com/The-Fisher-Slopworks-Co/jira).
-Jira Cloud is not supported — it disabled cookie auth.
+Built on [`@slopworks/jira`](https://github.com/The-Fisher-Slopworks-Co/jira),
+which is its only dependency and has none of its own. Jira Cloud is not
+supported — it disabled cookie auth.
 
 ## Install
 

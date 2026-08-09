@@ -3,12 +3,9 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { render } from 'ink';
-
-import { CancelError } from './cancel.js';
 import { runDownloadCommand } from './downloadCmd.js';
 import { runIssueCommand } from './issueCmd.js';
-import { LoginApp } from './login.js';
+import { runLoginCommand } from './login.js';
 
 const USAGE = `jira — command-line client for Jira Server / Data Center
 
@@ -27,8 +24,9 @@ if (mode == null || mode === 'help' || mode === '--help' || mode === '-h') {
   process.exit(0);
 }
 
-// `jira issue` and `jira download` are non-interactive (plain stdout, no Ink) so
-// a pipe or an AI agent can read an issue. Each manages its own exit code.
+// Every command returns its own exit code and never throws: `issue` and
+// `download` write plain text to stdout so a pipe or an agent can read them,
+// `login` prompts. 0 success, 2 usage error, 130 interrupted, 1 anything else.
 if (mode === 'issue') {
   process.exit(await runIssueCommand(process.argv.slice(3)));
 }
@@ -37,22 +35,9 @@ if (mode === 'download') {
   process.exit(await runDownloadCommand(process.argv.slice(3)));
 }
 
-if (mode !== 'login') {
-  process.stderr.write(`jira: unknown command '${mode}'\n\n${USAGE}`);
-  process.exit(2);
+if (mode === 'login') {
+  process.exit(await runLoginCommand());
 }
 
-// `jira login` is the one interactive command: it prompts through Ink and exits
-// the process, mapping Ctrl-C / Esc to 130.
-const { waitUntilExit } = render(<LoginApp />, { exitOnCtrlC: false });
-
-try {
-  await waitUntilExit();
-} catch (err) {
-  if (err instanceof CancelError) {
-    process.exitCode = 130;
-  } else {
-    process.stderr.write(`error: ${err instanceof Error ? err.message : String(err)}\n`);
-    process.exitCode = 1;
-  }
-}
+process.stderr.write(`jira: unknown command '${mode}'\n\n${USAGE}`);
+process.exit(2);
