@@ -1,0 +1,59 @@
+{
+  "name": "@slopworks/jira-cli",
+  "version": "0.1.0",
+  "description": "Command-line client for Jira Server / Data Center: read an issue and download its attachments from the terminal.",
+  "license": "AGPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/The-Fisher-Slopworks-Co/jira-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/The-Fisher-Slopworks-Co/jira-cli/issues"
+  },
+  "homepage": "https://github.com/The-Fisher-Slopworks-Co/jira-cli#readme",
+  "keywords": [
+    "jira",
+    "jira-server",
+    "jira-data-center",
+    "cli",
+    "cookie-auth",
+    "terminal"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "jira": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "LICENSES",
+    "REUSE.toml"
+  ],
+  "engines": {
+    "bun": ">=1.1.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist",
+    "dev": "bun run src/cli.tsx",
+    "prepublishOnly": "bun run clean && bun run build",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@slopworks/jira": "^0.1.0",
+    "ink": "^7.0.5",
+    "ink-text-input": "^6.0.0",
+    "react": "^19.2.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "@types/react": "^19.2.16",
+    "ink-testing-library": "^4.0.0",
+    "typescript": "^7.0.2"
+  }
+}

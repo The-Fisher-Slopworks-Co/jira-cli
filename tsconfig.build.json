@@ -1,0 +1,14 @@
+{
+  // Publish build: emits the runnable CLI to dist/. The base config stays
+  // noEmit and covers the tests too, so it can keep serving `bun run typecheck`.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist",
+    "rootDir": "src",
+    "declaration": false,
+    "sourceMap": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
+}
