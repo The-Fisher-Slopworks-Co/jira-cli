@@ -78,6 +78,7 @@ function harness(
       if (!live(session)) throw new JiraAuthError('Jira session expired');
       return opts.details === undefined ? detailsWith([attachment({})]) : opts.details;
     },
+    searchIssues: async () => ({ startAt: 0, maxResults: 0, total: 0, issues: [] }),
     downloadAttachment: async (session, url) => {
       if (!live(session)) throw new JiraAuthError('Jira session expired');
       return (opts.download ?? (() => new Uint8Array([1, 2, 3])))(url);

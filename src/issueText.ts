@@ -64,7 +64,7 @@ export function formatIssueText(details: JiraIssueDetails, baseUrl: string | nul
 }
 
 /** A section heading followed by an underline of matching width. */
-function section(title: string): string[] {
+export function section(title: string): string[] {
   return [title, '-'.repeat(title.length)];
 }
 

@@ -17,16 +17,17 @@ bun run dev -- help # run from source
 
 ## Architecture
 
-`src/cli.ts` routes `issue` / `download` / `login` and owns the exit codes.
-Everything under it is single-purpose:
+`src/cli.ts` routes `issue` / `search` / `download` / `login` and owns the exit
+codes. Everything under it is single-purpose:
 
 - `jira.ts` — the adapter over `@slopworks/jira`: `JiraApi` (session, issue
-  details, attachment bytes) plus `makeJiraAuth`/`withReauth`, the transparent
-  session source that signs in from the keychain and refreshes on a 401.
+  details, JQL search, attachment bytes) plus `makeJiraAuth`/`withReauth`, the
+  transparent session source that signs in from the keychain and refreshes on a
+  401.
 - `session.ts` — session persistence (`$XDG_CONFIG_HOME/jira-cli/session.json`).
 - `credentials.ts` — the OS keychain, via `Bun.secrets`.
-- `issueText.ts` — the pure formatter; `issueCmd.ts` / `downloadCmd.ts` — the
-  two non-interactive command runners.
+- `issueText.ts` / `searchText.ts` — the pure formatters; `issueCmd.ts` /
+  `searchCmd.ts` / `downloadCmd.ts` — the three non-interactive command runners.
 - `login.ts` — the one interactive flow; `prompt.ts` — the terminal input it
   asks through.
 
@@ -38,6 +39,12 @@ Everything under it is single-purpose:
 - **The library is transport; this repo is policy.** `@slopworks/jira` is pure by
   design — no filesystem, no `process.env`, no stored session. Anything about
   *where* a session or credential lives belongs here, never upstream.
+- **`jira search` never touches the JQL.** It goes to Jira exactly as typed — no
+  default scope, status filter or sort. What counts as an interesting issue is
+  the caller's policy, and a clause added here is one they can't remove. The
+  printed totals are the same idea: a truncated page must not read like a
+  complete one. Search also carries its own timeout via `client.request`, since
+  `getJson` would impose the library's six-second small-JSON one.
 - Bun is a runtime requirement, not just a toolchain one: `credentials.ts` calls
   `Bun.secrets`. It is declared via a module-scoped `declare const Bun` so the
   node-typed tsconfig still compiles, and every call is wrapped in try/catch —

@@ -15,6 +15,7 @@ import {
   JiraAuthError,
   makeJira,
   makeJiraAuth,
+  parseSearchResults,
   withReauth,
   type JiraApi,
   type JiraSession,
@@ -212,6 +213,182 @@ test('downloadAttachment replays the cookie and surfaces a 401 as JiraAuthError'
   );
 });
 
+// --- JQL search --------------------------------------------------------------
+
+const SEARCH_BODY = {
+  startAt: 10,
+  maxResults: 5,
+  total: 42,
+  issues: [
+    {
+      key: 'PROJ-9',
+      fields: {
+        summary: 'Rate limiter for the public API',
+        status: { name: 'In Progress' },
+        issuetype: { name: 'Story' },
+        assignee: { displayName: 'Alice' },
+        priority: { name: 'Major' },
+        updated: '2026-08-04T12:33:21.000+0300',
+        components: [{ name: 'Backend' }],
+        labels: ['api'],
+        fixVersions: [{ name: '2.7.0' }],
+        issuelinks: [
+          {
+            type: { name: 'Blocks', inward: 'is blocked by', outward: 'blocks' },
+            inwardIssue: {
+              key: 'PROJ-4',
+              fields: { summary: 'Token bucket', status: { name: 'Open' } },
+            },
+          },
+        ],
+      },
+    },
+    { key: 'PROJ-10', fields: { summary: 'Unassigned one', assignee: null, issuelinks: [] } },
+  ],
+};
+
+/** Capture one request's method, path and JSON body, then answer with `reply`. */
+function record(
+  seen: { method?: string; path?: string; body?: unknown },
+  reply: unknown,
+): (req: IncomingMessage, res: ServerResponse) => void {
+  return (req, res) => {
+    let raw = '';
+    req.on('data', (chunk) => {
+      raw += chunk;
+    });
+    req.on('end', () => {
+      seen.method = req.method;
+      seen.path = new URL(req.url ?? '', 'http://localhost').pathname;
+      seen.body = raw === '' ? undefined : JSON.parse(raw);
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify(reply));
+    });
+  };
+}
+
+test('searchIssues posts the query verbatim and maps rows, links and totals', async (t: TestContext) => {
+  isolateConfig(t);
+  const seen: { method?: string; path?: string; body?: unknown } = {};
+  const base = await listen(t, record(seen, SEARCH_BODY));
+  const jql = 'project = PROJ AND component = Backend ORDER BY Rank ASC';
+  const results = await makeJira().searchIssues({ baseUrl: base, cookie: 'JSESSIONID=x' }, jql, {
+    startAt: 10,
+    maxResults: 5,
+  });
+
+  assert.equal(seen.method, 'POST');
+  assert.equal(seen.path, '/rest/api/2/search');
+  const sent = seen.body as { jql: string; startAt: number; maxResults: number; fields: string[] };
+  assert.equal(sent.jql, jql); // nothing appended to it
+  assert.equal(sent.startAt, 10);
+  assert.equal(sent.maxResults, 5);
+  // The triage set: what ranks a backlog, and not the bodies that would make
+  // every row a page of text.
+  assert.ok(sent.fields.includes('assignee') && sent.fields.includes('issuelinks'));
+  assert.ok(!sent.fields.includes('description') && !sent.fields.includes('comment'));
+
+  assert.equal(results.total, 42);
+  assert.equal(results.startAt, 10);
+  assert.deepEqual(results.issues[0], {
+    key: 'PROJ-9',
+    summary: 'Rate limiter for the public API',
+    status: 'In Progress',
+    issueType: 'Story',
+    assignee: 'Alice',
+    priority: 'Major',
+    updated: '2026-08-04T12:33:21.000+0300',
+    components: ['Backend'],
+    labels: ['api'],
+    fixVersions: ['2.7.0'],
+    // The blocker's own status rides along, so nothing extra has to be fetched.
+    links: [{ relation: 'is blocked by', key: 'PROJ-4', summary: 'Token bucket', status: 'Open' }],
+  });
+  assert.equal(results.issues[1].assignee, null);
+});
+
+test('searchIssues surfaces a 401 as JiraAuthError', async (t: TestContext) => {
+  isolateConfig(t);
+  const base = await listen(t, (_req, res) => {
+    res.statusCode = 401;
+    res.end('{}');
+  });
+  await assert.rejects(
+    () => makeJira().searchIssues({ baseUrl: base, cookie: 'JSESSIONID=x' }, 'project = PROJ'),
+    JiraAuthError,
+  );
+});
+
+test('searchIssues reports why Jira rejected a query, not just the status', async (t: TestContext) => {
+  isolateConfig(t);
+  const base = await listen(t, (_req, res) => {
+    res.statusCode = 400;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(
+      JSON.stringify({
+        errorMessages: ["Field 'nope' does not exist or you do not have permission to view it."],
+        errors: {},
+      }),
+    );
+  });
+  await assert.rejects(
+    () => makeJira().searchIssues({ baseUrl: base, cookie: 'JSESSIONID=x' }, 'nope = 1'),
+    /Field 'nope' does not exist/,
+  );
+});
+
+test('searchIssues falls back to the status when the failure has no message', async (t: TestContext) => {
+  isolateConfig(t);
+  const base = await listen(t, (_req, res) => {
+    res.statusCode = 503;
+    res.end('<html>down for maintenance</html>');
+  });
+  await assert.rejects(
+    () => makeJira().searchIssues({ baseUrl: base, cookie: 'JSESSIONID=x' }, 'project = PROJ'),
+    /HTTP 503/,
+  );
+});
+
+test('parseSearchResults words an outward link with the other side of the type', () => {
+  const parsed = parseSearchResults({
+    total: 1,
+    issues: [
+      {
+        key: 'PROJ-1',
+        fields: {
+          issuelinks: [
+            {
+              type: { inward: 'is blocked by', outward: 'blocks' },
+              outwardIssue: { key: 'PROJ-2', fields: { status: { name: 'Done' } } },
+            },
+          ],
+        },
+      },
+    ],
+  });
+  assert.deepEqual(parsed.issues[0].links, [
+    { relation: 'blocks', key: 'PROJ-2', summary: null, status: 'Done' },
+  ]);
+});
+
+test('parseSearchResults drops the rows and links it cannot name', () => {
+  const parsed = parseSearchResults({
+    issues: [
+      { fields: { summary: 'no key at all' } },
+      { key: 'PROJ-1', fields: { issuelinks: [{ type: {} }, 'nonsense'] } },
+    ],
+  });
+  assert.deepEqual(
+    parsed.issues.map((i) => i.key),
+    ['PROJ-1'],
+  );
+  assert.deepEqual(parsed.issues[0].links, []);
+});
+
+test('parseSearchResults survives a body with nothing in it', () => {
+  assert.deepEqual(parseSearchResults(null), { startAt: 0, maxResults: 0, total: 0, issues: [] });
+});
+
 // --- Transparent session management (makeJiraAuth / withReauth) --------------
 
 const CREDS: JiraCredentials = { baseUrl: 'https://jira.test', username: 'alice', password: 'secret' };
@@ -231,6 +408,7 @@ function stubJira(opts: { session?: JiraSession | null; loginError?: Error } = {
       return { baseUrl, cookie: `JSESSIONID=fresh-${logins}-${username}-${password.length}` };
     },
     fetchIssueDetails: async () => null,
+    searchIssues: async () => ({ startAt: 0, maxResults: 0, total: 0, issues: [] }),
     downloadAttachment: async () => new Uint8Array(),
   };
   return {

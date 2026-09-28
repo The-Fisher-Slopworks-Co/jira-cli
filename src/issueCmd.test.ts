@@ -55,6 +55,7 @@ function harness(
       }
       return opts.details === undefined ? DETAILS : opts.details;
     },
+    searchIssues: async () => ({ startAt: 0, maxResults: 0, total: 0, issues: [] }),
     downloadAttachment: async () => new Uint8Array(),
   };
   const store: CredentialStore = {

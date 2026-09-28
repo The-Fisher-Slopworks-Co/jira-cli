@@ -30,6 +30,7 @@ function fakeJira(opts: { session?: JiraSession | null; loginError?: Error } = {
       return { baseUrl, cookie: 'JSESSIONID=new' };
     },
     fetchIssueDetails: async () => null,
+    searchIssues: async () => ({ startAt: 0, maxResults: 0, total: 0, issues: [] }),
     downloadAttachment: async () => new Uint8Array(),
   };
   return { api, logins };
@@ -214,6 +215,7 @@ test('saved credentials that stopped working fall through to an interactive sign
       return { baseUrl, cookie: 'JSESSIONID=new' };
     },
     fetchIssueDetails: async () => null,
+    searchIssues: async () => ({ startAt: 0, maxResults: 0, total: 0, issues: [] }),
     downloadAttachment: async () => new Uint8Array(),
   };
   const store = fakeStore({ baseUrl: 'https://jira.test', username: 'alice', password: 'stale' });

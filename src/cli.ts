@@ -6,12 +6,15 @@
 import { runDownloadCommand } from './downloadCmd.js';
 import { runIssueCommand } from './issueCmd.js';
 import { runLoginCommand } from './login.js';
+import { runSearchCommand } from './searchCmd.js';
 
 const USAGE = `jira — command-line client for Jira Server / Data Center
 
 Usage:
   jira issue <KEY>     print an issue: description, subtasks, comments, attachments
                        (add --json for the raw issue object)
+  jira search <JQL>    find issues by JQL, one row each
+                       (--json for every field, --limit / --start to page)
   jira download <KEY>  download an issue's attachments (--out <dir> to choose where)
   jira login           sign in to Jira (refreshes the saved session)
   jira help            show this help
@@ -29,6 +32,10 @@ if (mode == null || mode === 'help' || mode === '--help' || mode === '-h') {
 // `login` prompts. 0 success, 2 usage error, 130 interrupted, 1 anything else.
 if (mode === 'issue') {
   process.exit(await runIssueCommand(process.argv.slice(3)));
+}
+
+if (mode === 'search') {
+  process.exit(await runSearchCommand(process.argv.slice(3)));
 }
 
 if (mode === 'download') {

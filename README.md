@@ -24,12 +24,18 @@ bun add -g @slopworks/jira-cli
 jira login              # prompts for URL, username, password
 jira issue PROJ-123     # description, subtasks, comments, attachments
 jira issue PROJ-123 --json
+jira search 'project = PROJ AND statusCategory != Done'
 jira download PROJ-123 --out ./attachments
 ```
 
 `jira login` puts your credentials in the OS keychain and writes the session to
 `$XDG_CONFIG_HOME/jira-cli/session.json`, mode 600. After that it signs itself
 back in whenever the cookie expires. `JIRA_URL` overrides the saved base URL.
+
+`jira search` sends the JQL untouched — no clause is added to it — and prints a
+row per issue, the linked issues underneath, and how much of the result set that
+was. `--json` adds components, labels and fix versions; `--limit` and `--start`
+page through the rest.
 
 ## Development
 
