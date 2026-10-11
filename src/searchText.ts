@@ -27,15 +27,12 @@ export function formatSearchText(results: JiraSearchResults): string {
     issue.assignee ?? "unassigned",
     day(issue.updated),
   ]);
-  const widths =
-    columns.length > 0
-      ? columns[0].map((_, col) =>
-          Math.max(...columns.map((row) => row[col].length)),
-        )
-      : [];
+  const widths = (columns[0] ?? []).map((_, col) =>
+    Math.max(...columns.map((row) => row[col]?.length ?? 0)),
+  );
   results.issues.forEach((issue, row) => {
-    const head = columns[row]
-      .map((value, col) => value.padEnd(widths[col]))
+    const head = (columns[row] ?? [])
+      .map((value, col) => value.padEnd(widths[col] ?? 0))
       .join("  ");
     out.push(`${head}  ${issue.summary ?? ""}`.trimEnd());
   });

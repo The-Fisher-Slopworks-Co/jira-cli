@@ -66,6 +66,8 @@ export async function runSearchCommand(
   const positional: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
+    // Never taken while i < args.length; narrows for noUncheckedIndexedAccess.
+    if (arg === undefined) break;
     if (arg === "--json") {
       json = true;
     } else if (arg === "--help" || arg === "-h") {

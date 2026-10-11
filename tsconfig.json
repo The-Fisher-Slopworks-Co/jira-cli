@@ -6,7 +6,15 @@
     "lib": ["ES2023"],
     "types": ["node"],
     "noEmit": true,
+    "verbatimModuleSyntax": true,
     "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    // An optional property means "may be absent", not "may be present and
+    // undefined" — so a maybe-undefined value can't be forwarded into one by
+    // accident. Option bags that genuinely accept both spell it `?: T |
+    // undefined`.
+    "exactOptionalPropertyTypes": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noImplicitReturns": true,
