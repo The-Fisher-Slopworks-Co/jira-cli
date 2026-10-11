@@ -8,12 +8,20 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 ## Commands
 
 ```sh
-bun install
-bun test            # the node:test API, run by bun test
-bun run typecheck   # tsc --noEmit, covers the tests too
-bun run build       # tsc -p tsconfig.build.json → dist/
-bun run dev -- help # run from source
+bun install          # also installs the lefthook pre-commit hook
+bun run check        # the whole gate: typecheck, lint, format:check, knip, reuse, test
+bun test             # the node:test API, run by bun test
+bun run typecheck    # tsc --noEmit, covers the tests too
+bun run lint         # oxlint
+bun run format       # prettier --write; format:check only verifies
+bun run knip         # unused files, exports and dependencies
+bun run reuse        # uvx reuse lint; needs uv installed
+bun run build        # tsc -p tsconfig.build.json → dist/
+bun run dev -- help  # run from source
 ```
+
+CI runs the same gate (minus REUSE, which has its own workflow) plus
+`bun run build`, and a version tag publishes only after it passes.
 
 ## Definition of done
 
@@ -26,7 +34,7 @@ bun run dev -- help # run from source
   - Subject: lowercase start, imperative, no trailing period.
   - The body describes this PR alone, following the PR template.
 - **No AI attribution.** No `Assisted-by:` / `Co-Authored-By: <LLM>` trailers, no agent as commit author or committer, and no "Generated with/by …" lines or agent-platform links in PR bodies. The PR body becomes the squash commit body, so the PR title workflow checks the title, the body and every commit of the PR.
-- **Before opening:** `bun run typecheck && bun test && bun run build` green, then open the PR and report its URL.
+- **Before opening:** `bun run check` green, then open the PR and report its URL.
 - **Never merge locally.** Merging happens on GitHub, squash only.
 
 ## Architecture
@@ -48,7 +56,7 @@ codes. Everything under it is single-purpose:
 ## Gotchas
 
 - Import local modules with a `.js` extension even though the files are `.ts`:
-  `import { x } from './session.js'`. NodeNext rejects the extensionless form and
+  `import { x } from "./session.js"`. NodeNext rejects the extensionless form and
   emits the specifier verbatim, so what you write is what runs.
 - **The library is transport; this repo is policy.** `@slopworks/jira` is pure by
   design — no filesystem, no `process.env`, no stored session. Anything about
