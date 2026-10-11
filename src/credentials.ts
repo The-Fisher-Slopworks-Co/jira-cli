@@ -30,13 +30,17 @@ export interface CredentialStore {
 declare const Bun: {
   secrets: {
     get(options: { service: string; name: string }): Promise<string | null>;
-    set(options: { service: string; name: string; value: string }): Promise<void>;
+    set(options: {
+      service: string;
+      name: string;
+      value: string;
+    }): Promise<void>;
   };
 };
 
 /** Service + account under which the single Jira credential set is stored. */
-const SERVICE = 'jira-cli';
-const ACCOUNT = 'jira';
+const SERVICE = "jira-cli";
+const ACCOUNT = "jira";
 
 /** Validate a raw keychain value into credentials, or `null` if absent/malformed. */
 export function parseCredentials(raw: string | null): JiraCredentials | null {
@@ -46,11 +50,15 @@ export function parseCredentials(raw: string | null): JiraCredentials | null {
   try {
     const obj = JSON.parse(raw) as Partial<JiraCredentials>;
     if (
-      typeof obj.baseUrl === 'string' &&
-      typeof obj.username === 'string' &&
-      typeof obj.password === 'string'
+      typeof obj.baseUrl === "string" &&
+      typeof obj.username === "string" &&
+      typeof obj.password === "string"
     ) {
-      return { baseUrl: obj.baseUrl, username: obj.username, password: obj.password };
+      return {
+        baseUrl: obj.baseUrl,
+        username: obj.username,
+        password: obj.password,
+      };
     }
   } catch {
     // Malformed JSON → treat as absent.
@@ -67,14 +75,20 @@ export function makeCredentialStore(): CredentialStore {
       // libsecret. Treat any failure as "no credentials" so callers fall back to
       // an interactive login instead of crashing.
       try {
-        return parseCredentials(await Bun.secrets.get({ service: SERVICE, name: ACCOUNT }));
+        return parseCredentials(
+          await Bun.secrets.get({ service: SERVICE, name: ACCOUNT }),
+        );
       } catch {
         return null;
       }
     },
     async save(creds) {
       try {
-        await Bun.secrets.set({ service: SERVICE, name: ACCOUNT, value: JSON.stringify(creds) });
+        await Bun.secrets.set({
+          service: SERVICE,
+          name: ACCOUNT,
+          value: JSON.stringify(creds),
+        });
         return true;
       } catch {
         return false;

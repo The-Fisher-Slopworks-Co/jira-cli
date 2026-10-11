@@ -2,10 +2,10 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { CancelError } from './cancel.js';
-import { makeCredentialStore, type CredentialStore } from './credentials.js';
-import { makeJira, type JiraApi } from './jira.js';
-import { makePrompter, type Prompter } from './prompt.js';
+import { CancelError } from "./cancel.js";
+import { makeCredentialStore, type CredentialStore } from "./credentials.js";
+import { makeJira, type JiraApi } from "./jira.js";
+import { makePrompter, type Prompter } from "./prompt.js";
 
 /** Injectable side effects for {@link runLoginCommand}, so it can be unit-tested. */
 export interface LoginCmdDeps {
@@ -33,7 +33,9 @@ export interface LoginCmdDeps {
  * Returns a process exit code: 0 on success, 1 on a failed sign-in, 130 when the
  * user interrupts. Never throws.
  */
-export async function runLoginCommand(deps: LoginCmdDeps = {}): Promise<number> {
+export async function runLoginCommand(
+  deps: LoginCmdDeps = {},
+): Promise<number> {
   const err = deps.err ?? ((s) => process.stderr.write(s));
   const jira = deps.jira ?? makeJira();
   const store = deps.store ?? makeCredentialStore();
@@ -45,7 +47,9 @@ export async function runLoginCommand(deps: LoginCmdDeps = {}): Promise<number> 
       prompt.log(`found saved credentials for ${saved.username} — signing in…`);
       try {
         await jira.login(saved.baseUrl, saved.username, saved.password);
-        prompt.log(`signed in to ${saved.baseUrl} as ${saved.username}. session saved.`);
+        prompt.log(
+          `signed in to ${saved.baseUrl} as ${saved.username}. session saved.`,
+        );
         return 0;
       } catch (e) {
         // Fall through to an interactive sign-in so the user can recover and
@@ -56,15 +60,15 @@ export async function runLoginCommand(deps: LoginCmdDeps = {}): Promise<number> 
 
     const fallbackUrl = deps.jiraUrl ?? process.env.JIRA_URL;
     const previous = await jira.loadSession().catch(() => null);
-    const baseUrl = await prompt.ask('Jira URL', {
+    const baseUrl = await prompt.ask("Jira URL", {
       required: true,
       defaultValue: fallbackUrl || previous?.baseUrl || undefined,
     });
-    const username = await prompt.ask('Jira username', { required: true });
+    const username = await prompt.ask("Jira username", { required: true });
     // Passwords are masked and sent verbatim — no trimming.
-    const password = await prompt.ask('Jira password', {
+    const password = await prompt.ask("Jira password", {
       required: true,
-      mask: '*',
+      mask: "*",
       trim: false,
     });
 
@@ -76,9 +80,13 @@ export async function runLoginCommand(deps: LoginCmdDeps = {}): Promise<number> 
     }
     prompt.log(`signed in to ${baseUrl} as ${username}. session saved.`);
 
-    if (await prompt.confirm('Save credentials to keychain?', true)) {
+    if (await prompt.confirm("Save credentials to keychain?", true)) {
       const ok = await store.save({ baseUrl, username, password });
-      prompt.log(ok ? 'credentials saved to keychain.' : 'could not save credentials to keychain.');
+      prompt.log(
+        ok
+          ? "credentials saved to keychain."
+          : "could not save credentials to keychain.",
+      );
     }
     return 0;
   } catch (e) {

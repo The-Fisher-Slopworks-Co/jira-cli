@@ -3,10 +3,10 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { runDownloadCommand } from './downloadCmd.js';
-import { runIssueCommand } from './issueCmd.js';
-import { runLoginCommand } from './login.js';
-import { runSearchCommand } from './searchCmd.js';
+import { runDownloadCommand } from "./downloadCmd.js";
+import { runIssueCommand } from "./issueCmd.js";
+import { runLoginCommand } from "./login.js";
+import { runSearchCommand } from "./searchCmd.js";
 
 const USAGE = `jira — command-line client for Jira Server / Data Center
 
@@ -22,7 +22,7 @@ Usage:
 
 const mode = process.argv[2];
 
-if (mode == null || mode === 'help' || mode === '--help' || mode === '-h') {
+if (mode == null || mode === "help" || mode === "--help" || mode === "-h") {
   process.stdout.write(USAGE);
   process.exit(0);
 }
@@ -30,19 +30,19 @@ if (mode == null || mode === 'help' || mode === '--help' || mode === '-h') {
 // Every command returns its own exit code and never throws: `issue` and
 // `download` write plain text to stdout so a pipe or an agent can read them,
 // `login` prompts. 0 success, 2 usage error, 130 interrupted, 1 anything else.
-if (mode === 'issue') {
+if (mode === "issue") {
   process.exit(await runIssueCommand(process.argv.slice(3)));
 }
 
-if (mode === 'search') {
+if (mode === "search") {
   process.exit(await runSearchCommand(process.argv.slice(3)));
 }
 
-if (mode === 'download') {
+if (mode === "download") {
   process.exit(await runDownloadCommand(process.argv.slice(3)));
 }
 
-if (mode === 'login') {
+if (mode === "login") {
   process.exit(await runLoginCommand());
 }
 

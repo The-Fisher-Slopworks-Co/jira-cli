@@ -12,21 +12,21 @@
  * the echo, and with it Enter, backspace, Ctrl-C and Esc. Off a tty (a pipe, the
  * tests) there is nothing to echo, so masking degrades to a plain line read.
  */
-import { CancelError } from './cancel.js';
+import { CancelError } from "./cancel.js";
 
 /** ASCII controls raw mode hands us, named rather than spelled out at each use. */
-const ESC = '\u001b';
-const ETX = '\u0003'; // Ctrl-C
-const EOT = '\u0004'; // Ctrl-D
-const DEL = '\u007f'; // backspace on most terminals
+const ESC = "\u001b";
+const ETX = "\u0003"; // Ctrl-C
+const EOT = "\u0004"; // Ctrl-D
+const DEL = "\u007f"; // backspace on most terminals
 
 /** The slice of `process.stdin` this module needs, so tests can pass a stream. */
 export interface PromptInput {
-  on(event: 'data', listener: (chunk: string) => void): unknown;
-  on(event: 'end', listener: () => void): unknown;
-  off(event: 'data', listener: (chunk: string) => void): unknown;
-  off(event: 'end', listener: () => void): unknown;
-  setEncoding(encoding: 'utf8'): unknown;
+  on(event: "data", listener: (chunk: string) => void): unknown;
+  on(event: "end", listener: () => void): unknown;
+  off(event: "data", listener: (chunk: string) => void): unknown;
+  off(event: "end", listener: () => void): unknown;
+  setEncoding(encoding: "utf8"): unknown;
   resume(): unknown;
   pause(): unknown;
   isTTY?: boolean;
@@ -69,7 +69,7 @@ export function makePrompter(
   // Input arrives in chunks that need not line up with lines: a piped script can
   // deliver every answer at once. Everything read is buffered here and consumed
   // a line at a time.
-  let buffer = '';
+  let buffer = "";
   let ended = false;
   let wake: (() => void) | null = null;
 
@@ -82,9 +82,9 @@ export function makePrompter(
     wake?.();
   };
 
-  input.setEncoding('utf8');
-  input.on('data', onData);
-  input.on('end', onEnd);
+  input.setEncoding("utf8");
+  input.on("data", onData);
+  input.on("end", onEnd);
   input.resume();
 
   /** Wait until more input arrives (or the stream ends). */
@@ -101,18 +101,18 @@ export function makePrompter(
   /** Read one line, letting the terminal handle echo and editing. */
   async function readCookedLine(): Promise<string> {
     for (;;) {
-      const nl = buffer.indexOf('\n');
+      const nl = buffer.indexOf("\n");
       if (nl >= 0) {
         const line = buffer.slice(0, nl);
         buffer = buffer.slice(nl + 1);
-        return line.endsWith('\r') ? line.slice(0, -1) : line;
+        return line.endsWith("\r") ? line.slice(0, -1) : line;
       }
       if (ended) {
         // A last line with no trailing newline still counts; nothing at all
         // means the input is exhausted, which is a cancellation.
-        if (buffer === '') throw new CancelError('input ended');
+        if (buffer === "") throw new CancelError("input ended");
         const rest = buffer;
-        buffer = '';
+        buffer = "";
         return rest;
       }
       await more();
@@ -124,17 +124,17 @@ export function makePrompter(
     const wasRaw = input.isRaw === true;
     input.setRawMode?.(true);
     try {
-      let value = '';
+      let value = "";
       for (;;) {
-        if (buffer === '') {
-          if (ended) throw new CancelError('input ended');
+        if (buffer === "") {
+          if (ended) throw new CancelError("input ended");
           await more();
           continue;
         }
         const chunk = buffer;
-        buffer = '';
+        buffer = "";
 
-        for (let i = 0; i < chunk.length; ) {
+        for (let i = 0; i < chunk.length;) {
           const ch = chunk[i]!;
 
           if (ch === ESC) {
@@ -143,14 +143,14 @@ export function makePrompter(
             // longer is a key we skip over, so the characters *after* it are
             // still read rather than lost along with the sequence.
             if (i === chunk.length - 1) {
-              output.write('\n');
-              throw new CancelError('cancelled');
+              output.write("\n");
+              throw new CancelError("cancelled");
             }
             i = skipEscapeSequence(chunk, i);
             continue;
           }
-          if (ch === '\r' || ch === '\n') {
-            output.write('\n');
+          if (ch === "\r" || ch === "\n") {
+            output.write("\n");
             // Anything past the newline belongs to the next question.
             buffer = chunk.slice(i + 1) + buffer;
             return value;
@@ -158,19 +158,19 @@ export function makePrompter(
           if (ch === ETX || ch === EOT) {
             // Raw mode suppresses SIGINT, so cancel by hand rather than leave
             // the caller waiting forever.
-            output.write('\n');
-            throw new CancelError('cancelled');
+            output.write("\n");
+            throw new CancelError("cancelled");
           }
-          if (ch === DEL || ch === '\b') {
-            if (value !== '') {
+          if (ch === DEL || ch === "\b") {
+            if (value !== "") {
               value = value.slice(0, -1);
-              output.write('\b \b');
+              output.write("\b \b");
             }
             i++;
             continue;
           }
           // Skip the remaining C0 controls; they are not password material.
-          if (ch >= ' ') {
+          if (ch >= " ") {
             value += ch;
             output.write(mask);
           }
@@ -183,32 +183,35 @@ export function makePrompter(
   }
 
   const readValue = (mask?: string): Promise<string> =>
-    mask != null && input.isTTY === true ? readMaskedLine(mask) : readCookedLine();
+    mask != null && input.isTTY === true
+      ? readMaskedLine(mask)
+      : readCookedLine();
 
   return {
     async ask(label, options = {}) {
       const { defaultValue, required = false, mask, trim = true } = options;
-      const suffix = defaultValue != null && defaultValue !== '' ? ` [${defaultValue}]` : '';
+      const suffix =
+        defaultValue != null && defaultValue !== "" ? ` [${defaultValue}]` : "";
       for (;;) {
         output.write(`? ${label}${suffix}: `);
         const raw = await readValue(mask);
         const value = trim ? raw.trim() : raw;
-        if (value !== '') return value;
-        if (defaultValue != null && defaultValue !== '') return defaultValue;
-        if (!required) return '';
-        output.write('This field is required.\n');
+        if (value !== "") return value;
+        if (defaultValue != null && defaultValue !== "") return defaultValue;
+        if (!required) return "";
+        output.write("This field is required.\n");
       }
     },
 
     async confirm(label, defaultValue) {
-      const hint = defaultValue ? 'Y/n' : 'y/N';
+      const hint = defaultValue ? "Y/n" : "y/N";
       for (;;) {
         output.write(`? ${label} [${hint}]: `);
         const answer = (await readCookedLine()).trim().toLowerCase();
-        if (answer === '') return defaultValue;
-        if (answer === 'y' || answer === 'yes') return true;
-        if (answer === 'n' || answer === 'no') return false;
-        output.write('Please answer y or n.\n');
+        if (answer === "") return defaultValue;
+        if (answer === "y" || answer === "yes") return true;
+        if (answer === "n" || answer === "no") return false;
+        output.write("Please answer y or n.\n");
       }
     },
 
@@ -217,8 +220,8 @@ export function makePrompter(
     },
 
     close() {
-      input.off('data', onData);
-      input.off('end', onEnd);
+      input.off("data", onData);
+      input.off("end", onEnd);
       input.pause();
     },
   };
@@ -231,11 +234,11 @@ export function makePrompter(
  */
 function skipEscapeSequence(s: string, i: number): number {
   const next = s[i + 1];
-  if (next !== '[' && next !== 'O') {
+  if (next !== "[" && next !== "O") {
     return i + 2;
   }
   let j = i + 2;
-  while (j < s.length && !(s[j]! >= '@' && s[j]! <= '~')) {
+  while (j < s.length && !(s[j]! >= "@" && s[j]! <= "~")) {
     j++;
   }
   return j + 1;
