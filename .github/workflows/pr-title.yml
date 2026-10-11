@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: 2026 The Fisher Slopworks Co
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# Conventional-commit PR titles and no AI attribution, via the org's reusable
+# workflow. src/ is flat, so the scopes are its areas — one per command plus
+# the modules they share — and deps, github and release.
+name: PR title
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+concurrency:
+  group: pr-title-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  pr-title:
+    uses: The-Fisher-Slopworks-Co/.github/.github/workflows/pr-title.yml@main
+    with:
+      scopes: |
+        cli
+        credentials
+        download
+        issue
+        jira
+        login
+        prompt
+        search
+        session
+        deps
+        github
+        release
