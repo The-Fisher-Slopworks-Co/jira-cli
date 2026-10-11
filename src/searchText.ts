@@ -58,7 +58,7 @@ export function formatSearchText(results: JiraSearchResults): string {
 }
 
 /** One link as `is blocked by PROJ-9 (Open)`, dropping the parts Jira omitted. */
-export function describeLink(link: JiraIssueLink): string {
+function describeLink(link: JiraIssueLink): string {
   const status = link.status != null ? ` (${link.status})` : "";
   return `${link.relation ?? "links to"} ${link.key}${status}`;
 }

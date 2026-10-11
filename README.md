@@ -39,10 +39,11 @@ page through the rest.
 
 ## Development
 
+Needs [uv](https://docs.astral.sh/uv/) as well, for the REUSE check.
+
 ```sh
-bun install
-bun test
-bun run typecheck
+bun install       # also installs the pre-commit hook
+bun run check     # typecheck, lint, format, unused code, REUSE, tests
 bun run build
 ```
 

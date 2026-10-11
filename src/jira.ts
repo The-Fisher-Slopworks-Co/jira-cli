@@ -12,7 +12,7 @@ import {
   type JiraSubtask,
 } from "@slopworks/jira";
 
-import { type CredentialStore, makeCredentialStore } from "./credentials.js";
+import type { CredentialStore } from "./credentials.js";
 import { makeSessionStore, type SessionStore } from "./session.js";
 
 // Re-export the library's session type, 401 error, and the comment/attachment/
@@ -249,7 +249,9 @@ export function makeJira(sessions: SessionStore = makeSessionStore()): JiraApi {
           signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
         });
       } catch (err) {
-        throw new Error(`could not reach Jira: ${errMessage(err)}`);
+        throw new Error(`could not reach Jira: ${errMessage(err)}`, {
+          cause: err,
+        });
       }
       if (res.status === 401) throw new JiraAuthError("Jira session expired");
       if (!res.ok) throw new Error(await searchErrorMessage(res));
@@ -259,6 +261,7 @@ export function makeJira(sessions: SessionStore = makeSessionStore()): JiraApi {
       } catch (err) {
         throw new Error(
           `could not parse Jira's search response: ${errMessage(err)}`,
+          { cause: err },
         );
       }
       return parseSearchResults(body);
@@ -274,7 +277,9 @@ export function makeJira(sessions: SessionStore = makeSessionStore()): JiraApi {
           signal: AbortSignal.timeout(ATTACHMENT_TIMEOUT_MS),
         });
       } catch (err) {
-        throw new Error(`could not download attachment: ${errMessage(err)}`);
+        throw new Error(`could not download attachment: ${errMessage(err)}`, {
+          cause: err,
+        });
       }
       if (res.status === 401) throw new JiraAuthError("Jira session expired");
       if (!res.ok)
@@ -528,9 +533,4 @@ export async function withReauth<T>(
     }
     return await fn(fresh);
   }
-}
-
-/** Convenience: a {@link JiraAuth} over the real Jira client and OS keychain. */
-export function makeDefaultJiraAuth(jira: JiraApi = makeJira()): JiraAuth {
-  return makeJiraAuth(jira, makeCredentialStore());
 }
