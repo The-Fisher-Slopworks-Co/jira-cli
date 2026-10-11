@@ -63,7 +63,8 @@ function harness(
 ) {
   const out: string[] = [];
   const err: string[] = [];
-  const searches: { jql: string; options?: JiraSearchOptions }[] = [];
+  const searches: { jql: string; options?: JiraSearchOptions | undefined }[] =
+    [];
   const logins: JiraCredentials[] = [];
   const jira: JiraApi = {
     loadSession: async () =>

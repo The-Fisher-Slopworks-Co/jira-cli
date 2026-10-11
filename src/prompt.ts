@@ -29,7 +29,7 @@ export interface PromptInput {
   setEncoding(encoding: "utf8"): unknown;
   resume(): unknown;
   pause(): unknown;
-  isTTY?: boolean;
+  isTTY?: boolean | undefined;
   isRaw?: boolean;
   setRawMode?(mode: boolean): unknown;
 }
@@ -41,7 +41,7 @@ export interface PromptOutput {
 
 export interface AskOptions {
   /** Offered as `[value]` and returned when the answer is empty. */
-  defaultValue?: string;
+  defaultValue?: string | undefined;
   /** Re-ask while the answer is empty. */
   required?: boolean;
   /** Echo this instead of each character (e.g. `*`). */

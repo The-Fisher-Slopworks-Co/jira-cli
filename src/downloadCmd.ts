@@ -61,6 +61,8 @@ export async function runDownloadCommand(
   const positional: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
+    // Never taken while i < argv.length; narrows for noUncheckedIndexedAccess.
+    if (arg === undefined) break;
     if (arg === "--help" || arg === "-h") {
       out(USAGE);
       return 0;
@@ -143,8 +145,7 @@ export async function runDownloadCommand(
   // clobber each other (Jira allows duplicate names on one issue).
   const used = new Set<string>();
   let failures = 0;
-  for (let i = 0; i < attachments.length; i++) {
-    const a = attachments[i];
+  for (const [i, a] of attachments.entries()) {
     const name = uniqueName(
       safeFilename(a.filename, `attachment-${a.id ?? i + 1}`),
       used,

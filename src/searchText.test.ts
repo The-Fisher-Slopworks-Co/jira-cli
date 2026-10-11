@@ -51,6 +51,7 @@ test("aligns the columns and shows only the day of the last change", () => {
       }),
     ]),
   ).split("\n");
+  assert.ok(first != null && second != null);
   // Whatever the widths work out to, the summaries line up.
   assert.equal(first.indexOf("Short"), second.indexOf("Longer one"));
   assert.ok(first.includes("2026-08-04"));

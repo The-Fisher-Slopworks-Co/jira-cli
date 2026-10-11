@@ -309,7 +309,11 @@ const SEARCH_BODY = {
 
 /** Capture one request's method, path and JSON body, then answer with `reply`. */
 function record(
-  seen: { method?: string; path?: string; body?: unknown },
+  seen: {
+    method?: string | undefined;
+    path?: string;
+    body?: unknown;
+  },
   reply: unknown,
 ): (req: IncomingMessage, res: ServerResponse) => void {
   return (req, res) => {
@@ -384,7 +388,7 @@ test("searchIssues posts the query verbatim and maps rows, links and totals", as
       },
     ],
   });
-  assert.equal(results.issues[1].assignee, null);
+  assert.equal(results.issues[1]?.assignee, null);
 });
 
 test("searchIssues surfaces a 401 as JiraAuthError", async (t: TestContext) => {
@@ -463,7 +467,7 @@ test("parseSearchResults words an outward link with the other side of the type",
       },
     ],
   });
-  assert.deepEqual(parsed.issues[0].links, [
+  assert.deepEqual(parsed.issues[0]?.links, [
     { relation: "blocks", key: "PROJ-2", summary: null, status: "Done" },
   ]);
 });
@@ -479,7 +483,7 @@ test("parseSearchResults drops the rows and links it cannot name", () => {
     parsed.issues.map((i) => i.key),
     ["PROJ-1"],
   );
-  assert.deepEqual(parsed.issues[0].links, []);
+  assert.deepEqual(parsed.issues[0]?.links, []);
 });
 
 test("parseSearchResults survives a body with nothing in it", () => {
