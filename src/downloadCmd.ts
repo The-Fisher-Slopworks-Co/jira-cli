@@ -2,10 +2,10 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
-import { makeCredentialStore, type CredentialStore } from './credentials.js';
+import { makeCredentialStore, type CredentialStore } from "./credentials.js";
 import {
   JiraAuthError,
   makeJira,
@@ -14,8 +14,8 @@ import {
   type JiraApi,
   type JiraAttachment,
   type JiraAuth,
-} from './jira.js';
-import { formatBytes } from './issueText.js';
+} from "./jira.js";
+import { formatBytes } from "./issueText.js";
 
 /** Injectable side effects for {@link runDownloadCommand}, so it can be unit-tested. */
 export interface DownloadCmdDeps {
@@ -34,7 +34,7 @@ export interface DownloadCmdDeps {
   writeFile?: (path: string, data: Uint8Array) => Promise<void>;
 }
 
-const USAGE = 'Usage: jira download <KEY> [--out <dir>]\n';
+const USAGE = "Usage: jira download <KEY> [--out <dir>]\n";
 
 /**
  * Run `jira download <KEY>` — the non-interactive attachment downloader. Loads the
@@ -45,36 +45,41 @@ const USAGE = 'Usage: jira download <KEY> [--out <dir>]\n';
  * attachments), 2 on a usage error, 1 on any other failure (no session, expired
  * session, issue not found, or a download/write error). Never throws.
  */
-export async function runDownloadCommand(argv: string[], deps: DownloadCmdDeps = {}): Promise<number> {
+export async function runDownloadCommand(
+  argv: string[],
+  deps: DownloadCmdDeps = {},
+): Promise<number> {
   const out = deps.out ?? ((s) => process.stdout.write(s));
   const err = deps.err ?? ((s) => process.stderr.write(s));
-  const mkdirp = deps.mkdirp ?? (async (dir) => void (await mkdir(dir, { recursive: true })));
+  const mkdirp =
+    deps.mkdirp ??
+    (async (dir) => void (await mkdir(dir, { recursive: true })));
   const write = deps.writeFile ?? ((path, data) => writeFile(path, data));
 
   // Parse: one positional KEY, plus --out/-o <dir> (or --out=<dir>).
-  let outDir = '.';
+  let outDir = ".";
   const positional: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === '--help' || arg === '-h') {
+    if (arg === "--help" || arg === "-h") {
       out(USAGE);
       return 0;
-    } else if (arg === '--out' || arg === '-o') {
+    } else if (arg === "--out" || arg === "-o") {
       const value = argv[++i];
       if (value == null) {
         err(USAGE);
         return 2;
       }
       outDir = value;
-    } else if (arg.startsWith('--out=')) {
-      outDir = arg.slice('--out='.length);
+    } else if (arg.startsWith("--out=")) {
+      outDir = arg.slice("--out=".length);
     } else {
       positional.push(arg);
     }
   }
 
   const rawKey = positional[0];
-  if (rawKey == null || rawKey === '') {
+  if (rawKey == null || rawKey === "") {
     err(USAGE);
     return 2;
   }
@@ -83,20 +88,25 @@ export async function runDownloadCommand(argv: string[], deps: DownloadCmdDeps =
   const jira = deps.jira ?? makeJira();
   // Signs in from the saved keychain credentials when there's no session, so an
   // expired session doesn't dead-end an agent on `jira login` (as in `jira issue`).
-  const auth = deps.auth ?? makeJiraAuth(jira, deps.store ?? makeCredentialStore());
+  const auth =
+    deps.auth ?? makeJiraAuth(jira, deps.store ?? makeCredentialStore());
   const session = await auth.session().catch(() => null);
   if (session == null) {
-    err('jira: no Jira session — run `jira login` first.\n');
+    err("jira: no Jira session — run `jira login` first.\n");
     return 1;
   }
 
   let details;
   try {
     // Refresh the session from saved credentials on a 401 and retry once.
-    details = await withReauth(auth, session, (s) => jira.fetchIssueDetails(s, key));
+    details = await withReauth(auth, session, (s) =>
+      jira.fetchIssueDetails(s, key),
+    );
   } catch (e) {
     if (e instanceof JiraAuthError) {
-      err('jira: Jira session expired and saved credentials no longer work — run `jira login`.\n');
+      err(
+        "jira: Jira session expired and saved credentials no longer work — run `jira login`.\n",
+      );
       return 1;
     }
     err(`jira: ${e instanceof Error ? e.message : String(e)}\n`);
@@ -119,11 +129,15 @@ export async function runDownloadCommand(argv: string[], deps: DownloadCmdDeps =
   try {
     await mkdirp(outDir);
   } catch (e) {
-    err(`jira: could not create ${outDir}: ${e instanceof Error ? e.message : String(e)}\n`);
+    err(
+      `jira: could not create ${outDir}: ${e instanceof Error ? e.message : String(e)}\n`,
+    );
     return 1;
   }
 
-  out(`Downloading ${attachments.length} attachment${attachments.length === 1 ? '' : 's'} from ${key} to ${outDir}\n`);
+  out(
+    `Downloading ${attachments.length} attachment${attachments.length === 1 ? "" : "s"} from ${key} to ${outDir}\n`,
+  );
 
   // Track names used this run so two attachments with the same filename don't
   // clobber each other (Jira allows duplicate names on one issue).
@@ -131,21 +145,30 @@ export async function runDownloadCommand(argv: string[], deps: DownloadCmdDeps =
   let failures = 0;
   for (let i = 0; i < attachments.length; i++) {
     const a = attachments[i];
-    const name = uniqueName(safeFilename(a.filename, `attachment-${a.id ?? i + 1}`), used);
+    const name = uniqueName(
+      safeFilename(a.filename, `attachment-${a.id ?? i + 1}`),
+      used,
+    );
     const dest = join(outDir, name);
     try {
-      const bytes = await withReauth(auth, session, (s) => jira.downloadAttachment(s, a.content));
+      const bytes = await withReauth(auth, session, (s) =>
+        jira.downloadAttachment(s, a.content),
+      );
       await write(dest, bytes);
       const size = formatBytes(a.size ?? bytes.byteLength);
       out(`  ${dest}  (${size})\n`);
     } catch (e) {
       // An unrecoverable expired session affects every remaining file, so stop.
       if (e instanceof JiraAuthError) {
-        err('jira: Jira session expired and saved credentials no longer work — run `jira login`.\n');
+        err(
+          "jira: Jira session expired and saved credentials no longer work — run `jira login`.\n",
+        );
         return 1;
       }
       failures++;
-      err(`  failed: ${a.filename ?? name}: ${e instanceof Error ? e.message : String(e)}\n`);
+      err(
+        `  failed: ${a.filename ?? name}: ${e instanceof Error ? e.message : String(e)}\n`,
+      );
     }
   }
 
@@ -158,9 +181,9 @@ export async function runDownloadCommand(argv: string[], deps: DownloadCmdDeps =
  * back to `fallback` for empty / `.` / `..` names.
  */
 function safeFilename(raw: string | null, fallback: string): string {
-  const base = (raw ?? '').split(/[\\/]/).pop() ?? '';
+  const base = (raw ?? "").split(/[\\/]/).pop() ?? "";
   const trimmed = base.trim();
-  if (trimmed === '' || trimmed === '.' || trimmed === '..') return fallback;
+  if (trimmed === "" || trimmed === "." || trimmed === "..") return fallback;
   return trimmed;
 }
 
@@ -174,9 +197,9 @@ function uniqueName(name: string, used: Set<string>): string {
     return name;
   }
   // Split off a real extension only (a leading-dot name like `.env` has none).
-  const dot = name.lastIndexOf('.');
+  const dot = name.lastIndexOf(".");
   const stem = dot > 0 ? name.slice(0, dot) : name;
-  const ext = dot > 0 ? name.slice(dot) : '';
+  const ext = dot > 0 ? name.slice(dot) : "";
   let n = 2;
   while (used.has(`${stem} (${n})${ext}`)) n++;
   const unique = `${stem} (${n})${ext}`;

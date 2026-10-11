@@ -10,10 +10,10 @@ import {
   type JiraComment,
   type JiraSession,
   type JiraSubtask,
-} from '@slopworks/jira';
+} from "@slopworks/jira";
 
-import { type CredentialStore, makeCredentialStore } from './credentials.js';
-import { makeSessionStore, type SessionStore } from './session.js';
+import { type CredentialStore, makeCredentialStore } from "./credentials.js";
+import { makeSessionStore, type SessionStore } from "./session.js";
 
 // Re-export the library's session type, 401 error, and the comment/attachment/
 // subtask shapes so the rest of the CLI imports everything Jira-related from
@@ -114,13 +114,20 @@ export interface JiraApi {
    * Authenticate and persist the resulting session. Throws with a human-readable
    * message on bad credentials, a non-Server instance, or a network failure.
    */
-  login(baseUrl: string, username: string, password: string): Promise<JiraSession>;
+  login(
+    baseUrl: string,
+    username: string,
+    password: string,
+  ): Promise<JiraSession>;
   /**
    * Fetch an issue's full body for display. Returns `null` on a recoverable
    * failure (not found, network, timeout, unparseable). Throws
    * {@link JiraAuthError} on a 401 so the caller can re-authenticate.
    */
-  fetchIssueDetails(session: JiraSession, key: string): Promise<JiraIssueDetails | null>;
+  fetchIssueDetails(
+    session: JiraSession,
+    key: string,
+  ): Promise<JiraIssueDetails | null>;
   /**
    * Run a JQL search and return one page of rows. `jql` is passed to Jira
    * verbatim — no clause is appended, so what the caller wrote is what runs.
@@ -171,16 +178,16 @@ export const DEFAULT_SEARCH_LIMIT = 50;
  * every row a page of text (fetch those per issue with `jira issue <KEY>`).
  */
 const SEARCH_FIELDS = [
-  'summary',
-  'status',
-  'issuetype',
-  'assignee',
-  'priority',
-  'updated',
-  'components',
-  'labels',
-  'fixVersions',
-  'issuelinks',
+  "summary",
+  "status",
+  "issuetype",
+  "assignee",
+  "priority",
+  "updated",
+  "components",
+  "labels",
+  "fixVersions",
+  "issuelinks",
 ] as const;
 
 /**
@@ -206,7 +213,8 @@ export function makeJira(sessions: SessionStore = makeSessionStore()): JiraApi {
       const issue = await client
         .getIssue(session, key, { fields: DETAIL_ISSUE_FIELDS })
         .catch((err: unknown) => {
-          if (err instanceof JiraAuthError) throw new JiraAuthError('Jira session expired');
+          if (err instanceof JiraAuthError)
+            throw new JiraAuthError("Jira session expired");
           throw err;
         });
       if (issue == null) return null;
@@ -229,9 +237,9 @@ export function makeJira(sessions: SessionStore = makeSessionStore()): JiraApi {
       // carries its own timeout, since `getJson` would impose the small-JSON one.
       let res: Response;
       try {
-        res = await client.request(session, '/rest/api/2/search', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+        res = await client.request(session, "/rest/api/2/search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             jql,
             startAt: options.startAt ?? 0,
@@ -243,13 +251,15 @@ export function makeJira(sessions: SessionStore = makeSessionStore()): JiraApi {
       } catch (err) {
         throw new Error(`could not reach Jira: ${errMessage(err)}`);
       }
-      if (res.status === 401) throw new JiraAuthError('Jira session expired');
+      if (res.status === 401) throw new JiraAuthError("Jira session expired");
       if (!res.ok) throw new Error(await searchErrorMessage(res));
       let body: unknown;
       try {
         body = await res.json();
       } catch (err) {
-        throw new Error(`could not parse Jira's search response: ${errMessage(err)}`);
+        throw new Error(
+          `could not parse Jira's search response: ${errMessage(err)}`,
+        );
       }
       return parseSearchResults(body);
     },
@@ -260,14 +270,15 @@ export function makeJira(sessions: SessionStore = makeSessionStore()): JiraApi {
       let res: Response;
       try {
         res = await client.request(session, url, {
-          headers: { Accept: '*/*' },
+          headers: { Accept: "*/*" },
           signal: AbortSignal.timeout(ATTACHMENT_TIMEOUT_MS),
         });
       } catch (err) {
         throw new Error(`could not download attachment: ${errMessage(err)}`);
       }
-      if (res.status === 401) throw new JiraAuthError('Jira session expired');
-      if (!res.ok) throw new Error(`Jira returned HTTP ${res.status} for the attachment`);
+      if (res.status === 401) throw new JiraAuthError("Jira session expired");
+      if (!res.ok)
+        throw new Error(`Jira returned HTTP ${res.status} for the attachment`);
       return new Uint8Array(await res.arrayBuffer());
     },
   };
@@ -294,10 +305,16 @@ async function searchErrorMessage(res: Response): Promise<string> {
   }
   if (!isRecord(body)) return fallback;
   // Two shapes: `errorMessages` is a flat list, `errors` is keyed by field name.
-  const messages = Array.isArray(body.errorMessages) ? body.errorMessages.map(str) : [];
-  const errors = isRecord(body.errors) ? Object.values(body.errors).map(str) : [];
+  const messages = Array.isArray(body.errorMessages)
+    ? body.errorMessages.map(str)
+    : [];
+  const errors = isRecord(body.errors)
+    ? Object.values(body.errors).map(str)
+    : [];
   const all = [...messages, ...errors].filter((m): m is string => m != null);
-  return all.length > 0 ? `Jira rejected the search: ${all.join(' ')}` : fallback;
+  return all.length > 0
+    ? `Jira rejected the search: ${all.join(" ")}`
+    : fallback;
 }
 
 /**
@@ -309,7 +326,9 @@ async function searchErrorMessage(res: Response): Promise<string> {
 export function parseSearchResults(json: unknown): JiraSearchResults {
   const body = isRecord(json) ? json : {};
   const rows = Array.isArray(body.issues) ? body.issues : [];
-  const issues = rows.map(parseRow).filter((row): row is JiraSearchRow => row != null);
+  const issues = rows
+    .map(parseRow)
+    .filter((row): row is JiraSearchRow => row != null);
   return {
     startAt: num(body.startAt) ?? 0,
     // Jira echoes the page size it actually applied; fall back to what arrived.
@@ -330,11 +349,15 @@ function parseRow(json: unknown): JiraSearchRow | null {
     summary: str(fields.summary),
     status: name(fields.status),
     issueType: name(fields.issuetype),
-    assignee: isRecord(fields.assignee) ? str(fields.assignee.displayName) : null,
+    assignee: isRecord(fields.assignee)
+      ? str(fields.assignee.displayName)
+      : null,
     priority: name(fields.priority),
     updated: str(fields.updated),
     components: names(fields.components),
-    labels: Array.isArray(fields.labels) ? fields.labels.map(str).filter(isPresent) : [],
+    labels: Array.isArray(fields.labels)
+      ? fields.labels.map(str).filter(isPresent)
+      : [],
     fixVersions: names(fields.fixVersions),
     links: parseLinks(fields.issuelinks),
   };
@@ -349,7 +372,8 @@ function parseLinks(json: unknown): JiraIssueLink[] {
     // Exactly one side is populated, and which one decides the wording: the same
     // link type reads `is blocked by` inward and `blocks` outward.
     const inward = isRecord(raw.inwardIssue) ? raw.inwardIssue : null;
-    const other = inward ?? (isRecord(raw.outwardIssue) ? raw.outwardIssue : null);
+    const other =
+      inward ?? (isRecord(raw.outwardIssue) ? raw.outwardIssue : null);
     if (other == null) continue;
     const key = str(other.key);
     if (key == null) continue;
@@ -367,16 +391,16 @@ function parseLinks(json: unknown): JiraIssueLink[] {
 
 /** A JSON object (and not an array), the shape every nested Jira field takes. */
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** A non-empty string, or `null` — Jira spells "absent" both ways. */
 function str(value: unknown): string | null {
-  return typeof value === 'string' && value !== '' ? value : null;
+  return typeof value === "string" && value !== "" ? value : null;
 }
 
 function num(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 /** The `name` of a `{ name }` object: how Jira gives status, type, priority, version. */

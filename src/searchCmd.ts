@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { makeCredentialStore, type CredentialStore } from './credentials.js';
+import { makeCredentialStore, type CredentialStore } from "./credentials.js";
 import {
   DEFAULT_SEARCH_LIMIT,
   JiraAuthError,
@@ -11,8 +11,8 @@ import {
   withReauth,
   type JiraApi,
   type JiraAuth,
-} from './jira.js';
-import { formatSearchText } from './searchText.js';
+} from "./jira.js";
+import { formatSearchText } from "./searchText.js";
 
 /** Injectable side effects for {@link runSearchCommand}, so it can be unit-tested. */
 export interface SearchCmdDeps {
@@ -46,7 +46,10 @@ is what runs. Unquoted arguments are joined back together with spaces.
  * usage error, 1 on any other failure (no session, expired session, a query Jira
  * rejected, network). Never throws.
  */
-export async function runSearchCommand(argv: string[], deps: SearchCmdDeps = {}): Promise<number> {
+export async function runSearchCommand(
+  argv: string[],
+  deps: SearchCmdDeps = {},
+): Promise<number> {
   const out = deps.out ?? ((s) => process.stdout.write(s));
   const err = deps.err ?? ((s) => process.stderr.write(s));
 
@@ -63,19 +66,19 @@ export async function runSearchCommand(argv: string[], deps: SearchCmdDeps = {})
   const positional: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    if (arg === '--json') {
+    if (arg === "--json") {
       json = true;
-    } else if (arg === '--help' || arg === '-h') {
+    } else if (arg === "--help" || arg === "-h") {
       out(USAGE);
       return 0;
-    } else if (arg === '--limit' || arg === '-n') {
+    } else if (arg === "--limit" || arg === "-n") {
       const value = count(args[++i], 1);
       if (value == null) {
         err(`jira: --limit needs a whole number of 1 or more\n${USAGE}`);
         return 2;
       }
       maxResults = value;
-    } else if (arg === '--start') {
+    } else if (arg === "--start") {
       const value = count(args[++i], 0);
       if (value == null) {
         err(`jira: --start needs a whole number of 0 or more\n${USAGE}`);
@@ -89,8 +92,8 @@ export async function runSearchCommand(argv: string[], deps: SearchCmdDeps = {})
 
   // An unquoted query arrives as several arguments, so put it back together:
   // `jira search project = PROJ AND status = Open` should work as typed.
-  const jql = positional.join(' ').trim();
-  if (jql === '') {
+  const jql = positional.join(" ").trim();
+  if (jql === "") {
     err(USAGE);
     return 2;
   }
@@ -98,10 +101,11 @@ export async function runSearchCommand(argv: string[], deps: SearchCmdDeps = {})
   const jira = deps.jira ?? makeJira();
   // Signs in from the saved keychain credentials when there's no session, so an
   // expired session doesn't dead-end an agent on `jira login` (as in `jira issue`).
-  const auth = deps.auth ?? makeJiraAuth(jira, deps.store ?? makeCredentialStore());
+  const auth =
+    deps.auth ?? makeJiraAuth(jira, deps.store ?? makeCredentialStore());
   const session = await auth.session().catch(() => null);
   if (session == null) {
-    err('jira: no Jira session — run `jira login` first.\n');
+    err("jira: no Jira session — run `jira login` first.\n");
     return 1;
   }
 
@@ -113,7 +117,9 @@ export async function runSearchCommand(argv: string[], deps: SearchCmdDeps = {})
     );
   } catch (e) {
     if (e instanceof JiraAuthError) {
-      err('jira: Jira session expired and saved credentials no longer work — run `jira login`.\n');
+      err(
+        "jira: Jira session expired and saved credentials no longer work — run `jira login`.\n",
+      );
       return 1;
     }
     // Everything else already carries Jira's own explanation of the refusal.
@@ -132,7 +138,7 @@ export async function runSearchCommand(argv: string[], deps: SearchCmdDeps = {})
 
 /** A `--limit` / `--start` value as a whole number of at least `min`, else `null`. */
 function count(raw: string | undefined, min: number): number | null {
-  if (raw == null || raw.trim() === '') return null;
+  if (raw == null || raw.trim() === "") return null;
   const value = Number(raw);
   return Number.isInteger(value) && value >= min ? value : null;
 }

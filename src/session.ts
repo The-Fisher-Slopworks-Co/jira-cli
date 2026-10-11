@@ -11,21 +11,24 @@
  * `$XDG_CONFIG_HOME/jira-cli/session.json` (falling back to `~/.config`),
  * written `600` since it holds a live `JSESSIONID`.
  */
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 
-import type { JiraSession } from '@slopworks/jira';
+import type { JiraSession } from "@slopworks/jira";
 
 /** Directory the CLI owns under `$XDG_CONFIG_HOME` (or `~/.config`). */
-export const CONFIG_DIR = 'jira-cli';
+export const CONFIG_DIR = "jira-cli";
 /** Session file name inside {@link CONFIG_DIR}. */
-export const SESSION_FILE = 'session.json';
+export const SESSION_FILE = "session.json";
 
 /** The config directory, honouring `$XDG_CONFIG_HOME` when it is set and non-empty. */
-export function configDir(env: NodeJS.ProcessEnv = process.env, home: string = homedir()): string {
+export function configDir(
+  env: NodeJS.ProcessEnv = process.env,
+  home: string = homedir(),
+): string {
   const xdg = env.XDG_CONFIG_HOME;
-  const base = xdg != null && xdg !== '' ? xdg : join(home, '.config');
+  const base = xdg != null && xdg !== "" ? xdg : join(home, ".config");
   return join(base, CONFIG_DIR);
 }
 
@@ -45,7 +48,7 @@ export function parseSession(raw: string | null): JiraSession | null {
   }
   try {
     const obj = JSON.parse(raw) as Partial<JiraSession>;
-    if (typeof obj.baseUrl === 'string' && typeof obj.cookie === 'string') {
+    if (typeof obj.baseUrl === "string" && typeof obj.cookie === "string") {
       return { baseUrl: obj.baseUrl, cookie: obj.cookie };
     }
   } catch {
@@ -67,7 +70,7 @@ export function makeSessionStore(path: string = sessionPath()): SessionStore {
   return {
     async load() {
       try {
-        return parseSession(await readFile(path, 'utf8'));
+        return parseSession(await readFile(path, "utf8"));
       } catch {
         // Missing file, unreadable, no permission — all mean "not signed in".
         return null;
@@ -75,7 +78,9 @@ export function makeSessionStore(path: string = sessionPath()): SessionStore {
     },
     async save(session) {
       await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-      await writeFile(path, `${JSON.stringify(session, null, 2)}\n`, { mode: 0o600 });
+      await writeFile(path, `${JSON.stringify(session, null, 2)}\n`, {
+        mode: 0o600,
+      });
       // `mode` on writeFile only applies when the file is created, so an older
       // file keeps its permissions. Narrow them explicitly.
       await chmod(path, 0o600);
