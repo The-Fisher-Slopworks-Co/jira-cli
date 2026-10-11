@@ -18,9 +18,9 @@ import { dirname, join } from "node:path";
 import type { JiraSession } from "@slopworks/jira";
 
 /** Directory the CLI owns under `$XDG_CONFIG_HOME` (or `~/.config`). */
-export const CONFIG_DIR = "jira-cli";
+const CONFIG_DIR = "jira-cli";
 /** Session file name inside {@link CONFIG_DIR}. */
-export const SESSION_FILE = "session.json";
+const SESSION_FILE = "session.json";
 
 /** The config directory, honouring `$XDG_CONFIG_HOME` when it is set and non-empty. */
 export function configDir(
