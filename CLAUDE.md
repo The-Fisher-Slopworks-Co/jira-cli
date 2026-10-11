@@ -15,6 +15,20 @@ bun run build       # tsc -p tsconfig.build.json → dist/
 bun run dev -- help # run from source
 ```
 
+## Definition of done
+
+- **Issues and pull requests are written in English** — title and body, whatever language the task was discussed in.
+- **Never commit to main.** Every task starts on a fresh branch off `origin/main`, named `<type>/<short-task>` — `fix/`, `feat/`, `refactor/`, `chore/`.
+- **One task = one branch = one PR.** Past ~300 changed lines, split it into several PRs. `.github/workflows/pr-size.yml` labels every PR `size:XS`…`size:XXL`; **`size:XL` or `size:XXL` means split the PR**, not "explain why it is large".
+- **PR title is the squash commit subject:** conventional commit with a scope, enforced by `.github/workflows/pr-title.yml`.
+  - Type: `feat` `fix` `refactor` `chore` `docs` `test` `ci` `perf` `revert`.
+  - Scope (required): an area of `src/` — `cli` `credentials` `download` `issue` `jira` `login` `prompt` `search` `session` — or `deps` `github` `release`. A new area means adding it to the `scopes:` list in that workflow.
+  - Subject: lowercase start, imperative, no trailing period.
+  - The body describes this PR alone, following the PR template.
+- **No AI attribution.** No `Assisted-by:` / `Co-Authored-By: <LLM>` trailers, no agent as commit author or committer, and no "Generated with/by …" lines or agent-platform links in PR bodies. The PR body becomes the squash commit body, so the PR title workflow checks the title, the body and every commit of the PR.
+- **Before opening:** `bun run typecheck && bun test && bun run build` green, then open the PR and report its URL.
+- **Never merge locally.** Merging happens on GitHub, squash only.
+
 ## Architecture
 
 `src/cli.ts` routes `issue` / `search` / `download` / `login` and owns the exit
@@ -66,8 +80,8 @@ codes. Everything under it is single-purpose:
   framework.
 - Fixtures stay generic. Issue keys are `PROJ-*`, statuses are English, summaries
   are invented. No real tracker data.
-- Dependabot can't regenerate `bun.lock`. Its PRs bump `package.json` only, so
-  CI installs without `--frozen-lockfile` and the lockfile is refreshed by hand.
+- Dependabot runs the `bun` ecosystem, which regenerates `bun.lock` itself, so
+  CI installs with `--frozen-lockfile`. It only opens security updates.
 
 ## Compliance
 

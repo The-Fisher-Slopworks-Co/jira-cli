@@ -2,41 +2,32 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-# Keep the GitHub Actions used by our CI / release / REUSE workflows current.
 version: 2
+
 updates:
-  - package-ecosystem: "github-actions"
-    directory: "/"
+  # Security updates only: a limit of 0 turns off version updates, while
+  # Dependabot still opens PRs for vulnerable packages. The bun ecosystem
+  # regenerates bun.lock itself, so CI can install with --frozen-lockfile.
+  - package-ecosystem: bun
+    directory: /
     schedule:
-      interval: "weekly"
-      day: "monday"
+      interval: weekly
+    open-pull-requests-limit: 0
     commit-message:
-      prefix: "ci"
+      prefix: chore(deps)
+    groups:
+      security:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: chore(deps)
     groups:
       actions:
-        patterns:
-          - "*"
-
-  # The package manifest. Runtime and dev updates land as two PRs, so a bump to
-  # what users actually install is reviewed on its own rather than buried in a
-  # toolchain batch.
-  #
-  # Note: Dependabot cannot regenerate bun.lock — it edits package.json only, so
-  # every one of these PRs needs `bun install` run locally and the refreshed
-  # lockfile committed on top before merging.
-  - package-ecosystem: "npm"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-    commit-message:
-      prefix: "deps"
-    groups:
-      production-dependencies:
-        dependency-type: "production"
-        patterns:
-          - "*"
-      development-dependencies:
-        dependency-type: "development"
-        patterns:
-          - "*"
+        update-types: [minor, patch]

@@ -1,0 +1,45 @@
+# SPDX-FileCopyrightText: 2026 The Fisher Slopworks Co
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# The check gate minus REUSE (reuse.yml runs that on its own), defined once and
+# called by both CI (pull requests) and Release (version tags), so a tag is
+# published only after the same gate a PR ran.
+#
+# Called with a local path, so a PR is gated by its own version of this file.
+name: Check
+
+on: workflow_call
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Type check & tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # Frozen: Dependabot's bun ecosystem regenerates bun.lock itself, so a
+      # lockfile out of step with package.json is a real mistake.
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # One step per tool keeps the failing one visible in the run summary.
+      - name: Type check
+        run: bun run typecheck
+
+      - name: Run tests
+        run: bun run test
+
+      # The publish build is what consumers actually get, so break the build
+      # here rather than at `npm publish`.
+      - name: Build the package
+        run: bun run build

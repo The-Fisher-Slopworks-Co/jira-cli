@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+# What a version tag gets: the same gate a PR ran, then the package on npm.
 name: Release
 
 on:
@@ -9,15 +10,27 @@ on:
     tags:
       - "v*"
 
+# Serialized per tag, and never cancelled: killing a run mid-publish could
+# leave a half-released version behind.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
-  # Lets the runner mint the OIDC token npm exchanges for publish rights.
-  id-token: write
 
 jobs:
+  check:
+    uses: ./.github/workflows/check.yml
+
   publish:
     name: Publish to npm
+    needs: check
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Lets the runner mint the OIDC token npm exchanges for publish rights.
+      id-token: write
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -39,7 +52,7 @@ jobs:
         run: npm install -g npm@latest
 
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Check the tag against package.json
         run: |
@@ -49,12 +62,6 @@ jobs:
             echo "tag $GITHUB_REF_NAME does not match package.json version $pkg" >&2
             exit 1
           fi
-
-      - name: Type-check
-        run: bun run typecheck
-
-      - name: Run the test suite
-        run: bun test
 
       # No token anywhere: npm trades the OIDC token for publish rights and
       # attaches a provenance attestation on the way. prepublishOnly rebuilds
