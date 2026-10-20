@@ -46,6 +46,9 @@ codes. Everything under it is single-purpose:
   details, JQL search, attachment bytes) plus `makeJiraAuth`/`withReauth`, the
   transparent session source that signs in from the keychain and refreshes on a
   401.
+- `retry.ts` — `withRetry`: a few attempts with jittered backoff (or
+  `Retry-After`) for a dropped connection, a timeout or a 429/502–504. Every
+  `JiraApi` call goes through it; only safe because every call reads or signs in.
 - `session.ts` — session persistence (`$XDG_CONFIG_HOME/jira-cli/session.json`).
 - `credentials.ts` — the OS keychain, via `Bun.secrets`.
 - `issueText.ts` / `searchText.ts` — the pure formatters; `issueCmd.ts` /

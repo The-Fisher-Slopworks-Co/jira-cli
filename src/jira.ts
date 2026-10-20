@@ -16,6 +16,13 @@ import {
 } from "@slopworks/jira";
 
 import type { CredentialStore } from "./credentials.js";
+import {
+  isTransientStatus,
+  RETRY_ATTEMPTS,
+  TransientStatusError,
+  withRetry,
+  type RetryOptions,
+} from "./retry.js";
 import { makeSessionStore, type SessionStore } from "./session.js";
 
 // Re-export the library's session type, 401 error, and the comment/attachment/
@@ -219,12 +226,36 @@ const SEARCH_FIELDS = [
   "issuelinks",
 ] as const;
 
+/** Options for {@link makeJira}. */
+export interface JiraOptions {
+  /** Told about each retry, as a line ready to print (no `jira: ` prefix). */
+  onRetry?: ((message: string) => void) | undefined;
+  /** Waits between retries. Defaults to a timer; tests pass one that doesn't. */
+  sleep?: RetryOptions["sleep"] | undefined;
+}
+
 /**
  * Build the real {@link JiraApi}: a {@link JiraClient} for transport plus a
  * {@link SessionStore} for persistence. The store is a parameter so tests can
  * swap in an in-memory one.
+ *
+ * Every call retries a dropped connection, a timeout and a transient status
+ * (429, 502–504) a few times before giving up, since a VPN that blips for a
+ * second should cost the user a second, not a re-run.
  */
-export function makeJira(sessions: SessionStore = makeSessionStore()): JiraApi {
+export function makeJira(
+  sessions: SessionStore = makeSessionStore(),
+  jiraOptions: JiraOptions = {},
+): JiraApi {
+  const { onRetry, sleep } = jiraOptions;
+  const retry = <T>(fn: () => Promise<T>): Promise<T> =>
+    withRetry(fn, (err) => err instanceof JiraUnreachableError, {
+      sleep,
+      onRetry:
+        onRetry &&
+        ((err, attempt) =>
+          onRetry(`${err.message} — retrying (${attempt}/${RETRY_ATTEMPTS})…`)),
+    });
   // Every transport failure surfaces as a JiraUnreachableError straight from
   // fetch, so `request` callers see it as is. The library's `login` folds it
   // into a status-less JiraError, so the last one is also kept for `login` to
@@ -243,20 +274,20 @@ export function makeJira(sessions: SessionStore = makeSessionStore()): JiraApi {
   return {
     loadSession: () => sessions.load(),
     async login(baseUrl, username, password) {
-      lastUnreachable = null;
-      let session: JiraSession;
-      try {
-        session = await client.login(baseUrl, username, password);
-      } catch (err) {
-        // Every other login failure carries the HTTP status it came from.
-        if (
-          lastUnreachable != null &&
-          err instanceof JiraError &&
-          err.status === undefined
-        )
-          throw lastUnreachable;
-        throw err;
-      }
+      const session = await retry(async () => {
+        lastUnreachable = null;
+        try {
+          return await client.login(baseUrl, username, password);
+        } catch (err) {
+          if (!(err instanceof JiraError)) throw err;
+          // Every other login failure carries the HTTP status it came from.
+          if (lastUnreachable != null && err.status === undefined)
+            throw lastUnreachable;
+          if (err.status != null && isTransientStatus(err.status))
+            throw new TransientStatusError(err.message);
+          throw err;
+        }
+      });
       // The library returns the session and stores nothing; persisting it is
       // this layer's job (see session.ts).
       await sessions.save(session);
@@ -265,18 +296,21 @@ export function makeJira(sessions: SessionStore = makeSessionStore()): JiraApi {
     async fetchIssueDetails(session, key) {
       // `request`, not `getIssue`: the library's best-effort getIssue folds a
       // network failure into the same `null` as a missing issue.
-      const res = await client.request(
-        session,
-        issuePath(key, DETAIL_ISSUE_FIELDS),
-      );
-      if (res.status === 401) throw new JiraAuthError("Jira session expired");
-      // Jira answers 404 both for an unknown key and for one you can't see.
-      if (res.status === 404 || res.status === 403) return null;
-      if (!res.ok)
-        throw new Error(`Jira returned HTTP ${res.status} for ${key}`);
-      const issue = parseIssue(
-        await readBody(session.baseUrl, `issue ${key}`, () => res.json()),
-      );
+      const json = await retry(async () => {
+        const res = await client.request(
+          session,
+          issuePath(key, DETAIL_ISSUE_FIELDS),
+        );
+        if (res.status === 401) throw new JiraAuthError("Jira session expired");
+        // Jira answers 404 both for an unknown key and for one you can't see.
+        if (res.status === 404 || res.status === 403) return null;
+        const status = `Jira returned HTTP ${res.status} for ${key}`;
+        if (isTransientStatus(res.status)) throw transient(res, status);
+        if (!res.ok) throw new Error(status);
+        return readBody(session.baseUrl, `issue ${key}`, () => res.json());
+      });
+      if (json == null) return null;
+      const issue = parseIssue(json);
       return {
         key: issue.key ?? key,
         summary: issue.summary,
@@ -294,37 +328,48 @@ export function makeJira(sessions: SessionStore = makeSessionStore()): JiraApi {
       // POST, not GET: a real JQL query with quoted values and a sort clause is
       // long, and `request` passes the method and body straight through. Also
       // carries its own timeout, since `getJson` would impose the small-JSON one.
-      const res = await client.request(session, "/rest/api/2/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jql,
-          startAt: options.startAt ?? 0,
-          maxResults: options.maxResults ?? DEFAULT_SEARCH_LIMIT,
-          fields: SEARCH_FIELDS,
-        }),
-        signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
+      const body = JSON.stringify({
+        jql,
+        startAt: options.startAt ?? 0,
+        maxResults: options.maxResults ?? DEFAULT_SEARCH_LIMIT,
+        fields: SEARCH_FIELDS,
       });
-      if (res.status === 401) throw new JiraAuthError("Jira session expired");
-      if (!res.ok) throw new Error(await searchErrorMessage(res));
-      return parseSearchResults(
-        await readBody(session.baseUrl, "the search", () => res.json()),
-      );
+      // A search only reads, so repeating the POST is safe.
+      const json = await retry(async () => {
+        const res = await client.request(session, "/rest/api/2/search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+          signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
+        });
+        if (res.status === 401) throw new JiraAuthError("Jira session expired");
+        if (isTransientStatus(res.status))
+          throw transient(
+            res,
+            `Jira returned HTTP ${res.status} for the search`,
+          );
+        if (!res.ok) throw new Error(await searchErrorMessage(res));
+        return readBody(session.baseUrl, "the search", () => res.json());
+      });
+      return parseSearchResults(json);
     },
     async downloadAttachment(session, url) {
       // The attachment `content` URL is absolute, so `request` passes it through
       // untouched while still replaying the session cookie. Ask for any content
       // type (not the default JSON) and use the longer attachment timeout.
-      const res = await client.request(session, url, {
-        headers: { Accept: "*/*" },
-        signal: AbortSignal.timeout(ATTACHMENT_TIMEOUT_MS),
+      return retry(async () => {
+        const res = await client.request(session, url, {
+          headers: { Accept: "*/*" },
+          signal: AbortSignal.timeout(ATTACHMENT_TIMEOUT_MS),
+        });
+        if (res.status === 401) throw new JiraAuthError("Jira session expired");
+        const status = `Jira returned HTTP ${res.status} for the attachment`;
+        if (isTransientStatus(res.status)) throw transient(res, status);
+        if (!res.ok) throw new Error(status);
+        return new Uint8Array(
+          await readBody(url, "the attachment", () => res.arrayBuffer()),
+        );
       });
-      if (res.status === 401) throw new JiraAuthError("Jira session expired");
-      if (!res.ok)
-        throw new Error(`Jira returned HTTP ${res.status} for the attachment`);
-      return new Uint8Array(
-        await readBody(url, "the attachment", () => res.arrayBuffer()),
-      );
     },
   };
 }
@@ -353,6 +398,11 @@ async function readBody<T>(
       });
     throw new JiraUnreachableError(url, err);
   }
+}
+
+/** A {@link TransientStatusError} for `res`, keeping its `Retry-After`. */
+function transient(res: Response, message: string): TransientStatusError {
+  return new TransientStatusError(message, res.headers.get("Retry-After"));
 }
 
 /** The URL a `fetch` call was made with, whatever form it took. */
@@ -678,4 +728,15 @@ export async function resolveSession(
     if (e instanceof JiraUnreachableError) return reportJiraFailure(e, err);
     return null;
   }
+}
+
+/**
+ * Where a command sends retry notices: stderr when it is a terminal, nowhere
+ * otherwise — a person waiting wants to know why it's slow, a script reads the
+ * outcome.
+ */
+export function retryNotice(
+  err: (s: string) => void,
+): ((message: string) => void) | undefined {
+  return process.stderr.isTTY ? (m) => err(`jira: ${m}\n`) : undefined;
 }

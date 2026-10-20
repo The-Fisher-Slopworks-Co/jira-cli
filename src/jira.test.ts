@@ -25,6 +25,7 @@ import {
   reportJiraFailure,
   withReauth,
   type JiraApi,
+  type JiraOptions,
   type JiraSession,
 } from "./jira.js";
 
@@ -95,6 +96,11 @@ function isolateConfig(t: TestContext): void {
   });
 }
 
+/** The real adapter, minus the pauses between retries. */
+function testJira(options: JiraOptions = {}): JiraApi {
+  return makeJira(undefined, { sleep: async () => {}, ...options });
+}
+
 /** A base URL on a port nothing listens on, so every connection is refused. */
 async function closedPort(): Promise<string> {
   const server = createServer();
@@ -134,7 +140,7 @@ test("makeJira persists the session it signs in with, and reads it back", async 
     res.statusCode = 404;
     res.end("not found");
   });
-  const jira = makeJira();
+  const jira = testJira();
 
   // The library returns the session and stores nothing; this layer writes it,
   // which loadSession then reads back.
@@ -150,7 +156,7 @@ test("makeJira persists the session it signs in with, and reads it back", async 
 
 test("loadSession is null before anyone has signed in", async (t: TestContext) => {
   isolateConfig(t);
-  assert.equal(await makeJira().loadSession(), null);
+  assert.equal(await testJira().loadSession(), null);
 });
 
 test("fetchIssueDetails requests the body fields and maps description/comments/attachments", async (t: TestContext) => {
@@ -162,7 +168,7 @@ test("fetchIssueDetails requests the body fields and maps description/comments/a
     res.setHeader("Content-Type", "application/json");
     res.end(JSON.stringify(WITH_BODY));
   });
-  const jira = makeJira();
+  const jira = testJira();
   const details = await jira.fetchIssueDetails(
     { baseUrl: base, cookie: "JSESSIONID=x" },
     "PROJ-9",
@@ -224,7 +230,7 @@ test("fetchIssueDetails keeps an issue that has no summary", async (t: TestConte
       }),
     );
   });
-  const jira = makeJira();
+  const jira = testJira();
   const details = await jira.fetchIssueDetails(
     { baseUrl: base, cookie: "JSESSIONID=x" },
     "PROJ-1",
@@ -240,7 +246,7 @@ test("fetchIssueDetails surfaces a 401 as JiraAuthError and other errors as null
     res.end("{}");
   });
   const session = { baseUrl: base, cookie: "JSESSIONID=x" };
-  const jira = makeJira();
+  const jira = testJira();
   await assert.rejects(
     () => jira.fetchIssueDetails(session, "EXPIRED-1"),
     JiraAuthError,
@@ -260,7 +266,7 @@ test("downloadAttachment replays the cookie and surfaces a 401 as JiraAuthError"
     sentCookie = req.headers.cookie;
     res.end("file-bytes");
   });
-  const jira = makeJira();
+  const jira = testJira();
   const session = { baseUrl: base, cookie: "JSESSIONID=x" };
   const bytes = await jira.downloadAttachment(
     session,
@@ -348,7 +354,7 @@ test("searchIssues posts the query verbatim and maps rows, links and totals", as
   const seen: { method?: string; path?: string; body?: unknown } = {};
   const base = await listen(t, record(seen, SEARCH_BODY));
   const jql = "project = PROJ AND component = Backend ORDER BY Rank ASC";
-  const results = await makeJira().searchIssues(
+  const results = await testJira().searchIssues(
     { baseUrl: base, cookie: "JSESSIONID=x" },
     jql,
     {
@@ -411,7 +417,7 @@ test("searchIssues surfaces a 401 as JiraAuthError", async (t: TestContext) => {
   });
   await assert.rejects(
     () =>
-      makeJira().searchIssues(
+      testJira().searchIssues(
         { baseUrl: base, cookie: "JSESSIONID=x" },
         "project = PROJ",
       ),
@@ -435,7 +441,7 @@ test("searchIssues reports why Jira rejected a query, not just the status", asyn
   });
   await assert.rejects(
     () =>
-      makeJira().searchIssues(
+      testJira().searchIssues(
         { baseUrl: base, cookie: "JSESSIONID=x" },
         "nope = 1",
       ),
@@ -451,7 +457,7 @@ test("searchIssues falls back to the status when the failure has no message", as
   });
   await assert.rejects(
     () =>
-      makeJira().searchIssues(
+      testJira().searchIssues(
         { baseUrl: base, cookie: "JSESSIONID=x" },
         "project = PROJ",
       ),
@@ -691,7 +697,7 @@ test("an unreachable Jira is reported as such by every call, never as not found"
   isolateConfig(t);
   const base = await closedPort();
   const session = { baseUrl: base, cookie: "JSESSIONID=x" };
-  const jira = makeJira();
+  const jira = testJira();
   const unreachable = (e: unknown) =>
     e instanceof JiraUnreachableError &&
     e.message.includes(new URL(base).host) &&
@@ -719,7 +725,7 @@ test("a connection dropped mid-body is unreachable, not a parse failure", async 
   const session = { baseUrl: base, cookie: "JSESSIONID=x" };
   await assert.rejects(
     () =>
-      makeJira().downloadAttachment(session, `${base}/secure/attachment/5/a`),
+      testJira().downloadAttachment(session, `${base}/secure/attachment/5/a`),
     /could not reach .*connection dropped/,
   );
 });
@@ -731,7 +737,7 @@ test("fetchIssueDetails throws on a server error instead of reporting not found"
     res.end("{}");
   });
   const session = { baseUrl: base, cookie: "JSESSIONID=x" };
-  const jira = makeJira();
+  const jira = testJira();
   await assert.rejects(
     () => jira.fetchIssueDetails(session, "PROJ-9"),
     /HTTP 503 for PROJ-9/,
@@ -759,4 +765,83 @@ test("reportJiraFailure exits 3 for an unreachable Jira and 1 otherwise", () => 
   assert.equal(report(new JiraAuthError()), 1);
   assert.match(err.join(""), /run `jira login`/);
   assert.equal(report(new Error("HTTP 500")), 1);
+});
+
+test("a dropped connection is retried, and a notice says so", async (t: TestContext) => {
+  isolateConfig(t);
+  let requests = 0;
+  const base = await listen(t, (req, res) => {
+    if (++requests < 3) {
+      req.socket.destroy();
+      return;
+    }
+    res.setHeader("Content-Type", "application/json");
+    res.end(JSON.stringify(WITH_BODY));
+  });
+  const notices: string[] = [];
+  const jira = testJira({ onRetry: (m) => void notices.push(m) });
+  const details = await jira.fetchIssueDetails(
+    { baseUrl: base, cookie: "JSESSIONID=x" },
+    "PROJ-9",
+  );
+  assert.equal(details?.summary, "Has a body");
+  assert.equal(requests, 3);
+  assert.equal(notices.length, 2);
+  assert.match(notices[0] ?? "", /connection dropped.*retrying \(2\/3\)/);
+  assert.match(notices[1] ?? "", /retrying \(3\/3\)/);
+});
+
+test("retries give up after three attempts", async (t: TestContext) => {
+  isolateConfig(t);
+  const notices: string[] = [];
+  const base = await closedPort();
+  await assert.rejects(
+    () =>
+      testJira({ onRetry: (m) => void notices.push(m) }).searchIssues(
+        { baseUrl: base, cookie: "JSESSIONID=x" },
+        "x",
+      ),
+    JiraUnreachableError,
+  );
+  assert.equal(notices.length, 2);
+});
+
+test("a 503 is retried after the Retry-After Jira asks for", async (t: TestContext) => {
+  isolateConfig(t);
+  let requests = 0;
+  const base = await listen(t, (_req, res) => {
+    if (++requests === 1) {
+      res.writeHead(503, { "Retry-After": "2" });
+      res.end();
+      return;
+    }
+    res.end("bytes");
+  });
+  const pauses: number[] = [];
+  const jira = makeJira(undefined, {
+    sleep: async (ms) => void pauses.push(ms),
+  });
+  const bytes = await jira.downloadAttachment(
+    { baseUrl: base, cookie: "JSESSIONID=x" },
+    `${base}/secure/attachment/5/a`,
+  );
+  assert.equal(new TextDecoder().decode(bytes), "bytes");
+  assert.deepEqual(pauses, [2000]);
+});
+
+test("a definite answer — 404, 400, 401 — is never retried", async (t: TestContext) => {
+  isolateConfig(t);
+  let requests = 0;
+  const base = await listen(t, (req, res) => {
+    requests++;
+    res.statusCode = (req.url ?? "").includes("search") ? 400 : 404;
+    res.end("{}");
+  });
+  const session = { baseUrl: base, cookie: "JSESSIONID=x" };
+  const notices: string[] = [];
+  const jira = testJira({ onRetry: (m) => void notices.push(m) });
+  assert.equal(await jira.fetchIssueDetails(session, "PROJ-9"), null);
+  await assert.rejects(() => jira.searchIssues(session, "x"));
+  assert.equal(requests, 2);
+  assert.deepEqual(notices, []);
 });

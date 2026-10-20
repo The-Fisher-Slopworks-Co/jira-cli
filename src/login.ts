@@ -8,6 +8,7 @@ import {
   EXIT_UNREACHABLE,
   JiraUnreachableError,
   makeJira,
+  retryNotice,
   type JiraApi,
 } from "./jira.js";
 import { makePrompter, type Prompter } from "./prompt.js";
@@ -42,7 +43,7 @@ export async function runLoginCommand(
   deps: LoginCmdDeps = {},
 ): Promise<number> {
   const err = deps.err ?? ((s) => process.stderr.write(s));
-  const jira = deps.jira ?? makeJira();
+  const jira = deps.jira ?? makeJira(undefined, { onRetry: retryNotice(err) });
   const store = deps.store ?? makeCredentialStore();
   const prompt = deps.prompt ?? makePrompter();
 
