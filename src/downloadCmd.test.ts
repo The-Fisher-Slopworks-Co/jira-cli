@@ -3,6 +3,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import assert from "node:assert/strict";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import type { CredentialStore, JiraCredentials } from "./credentials.js";
@@ -63,11 +66,16 @@ function harness(
     creds?: JiraCredentials | null;
     /** When set, mkdirp rejects with this. */
     mkdirError?: unknown;
+    /** Files already on disk before the run, by path. */
+    existing?: Record<string, Uint8Array>;
   } = {},
 ) {
   const out: string[] = [];
   const err: string[] = [];
-  const files = new Map<string, Uint8Array>();
+  const files = new Map<string, Uint8Array>(
+    Object.entries(opts.existing ?? {}),
+  );
+  const fetched: string[] = [];
   const dirs: string[] = [];
   const logins: JiraCredentials[] = [];
   const live = (s: JiraSession) =>
@@ -94,6 +102,7 @@ function harness(
     }),
     downloadAttachment: async (session, url) => {
       if (!live(session)) throw new JiraAuthError("Jira session expired");
+      fetched.push(url);
       return (opts.download ?? (() => new Uint8Array([1, 2, 3])))(url);
     },
   };
@@ -112,8 +121,9 @@ function harness(
     },
     writeFile: async (path: string, data: Uint8Array) =>
       void files.set(path, data),
+    fileSize: async (path: string) => files.get(path)?.byteLength ?? null,
   };
-  return { deps, out, err, files, dirs, logins };
+  return { deps, out, err, files, dirs, logins, fetched };
 }
 
 const CREDS: JiraCredentials = {
@@ -331,4 +341,124 @@ test("an unreachable Jira mid-download stops at once and exits 3", async () => {
   assert.equal(await runDownloadCommand(["PROJ-9"], h.deps), 3);
   assert.deepEqual(fetched, ["https://jira.test/x/a"]); // b is never tried
   assert.match(h.err.join(""), /could not reach jira\.test/);
+});
+
+test("an attachment already there with the same size is kept, not fetched again", async () => {
+  const h = harness({
+    details: detailsWith([
+      attachment({
+        id: "1",
+        filename: "a.png",
+        size: 2,
+        content: "https://jira.test/x/a",
+      }),
+      attachment({
+        id: "2",
+        filename: "b.png",
+        size: 3,
+        content: "https://jira.test/x/b",
+      }),
+    ]),
+    // a.png is complete; b.png is a leftover of the wrong size.
+    existing: { "a.png": new Uint8Array([1, 1]), "b.png": new Uint8Array([9]) },
+  });
+  assert.equal(await runDownloadCommand(["PROJ-9"], h.deps), 0);
+  assert.deepEqual(h.fetched, ["https://jira.test/x/b"]);
+  assert.deepEqual(h.files.get("b.png"), new Uint8Array([1, 2, 3]));
+  const text = h.out.join("");
+  assert.match(text, /a\.png {2}\(2 B, already there\)/);
+  assert.match(text, /Done: 1 downloaded, 1 already there\.\n$/);
+});
+
+test("--force downloads again what is already there", async () => {
+  const h = harness({
+    details: detailsWith([
+      attachment({
+        filename: "a.png",
+        size: 3,
+        content: "https://jira.test/x/a",
+      }),
+    ]),
+    existing: { "a.png": new Uint8Array([1, 2, 3]) },
+  });
+  assert.equal(await runDownloadCommand(["PROJ-9", "--force"], h.deps), 0);
+  assert.deepEqual(h.fetched, ["https://jira.test/x/a"]);
+  assert.match(h.out.join(""), /Done: 1 downloaded\./);
+});
+
+test("the summary counts failures", async () => {
+  const h = harness({
+    details: detailsWith([
+      attachment({
+        id: "1",
+        filename: "ok.png",
+        content: "https://jira.test/x/ok",
+      }),
+      attachment({
+        id: "2",
+        filename: "bad.png",
+        content: "https://jira.test/x/bad",
+      }),
+    ]),
+    download: (url) => {
+      if (url.endsWith("bad")) throw new Error("HTTP 500");
+      return new Uint8Array([1]);
+    },
+  });
+  assert.equal(await runDownloadCommand(["PROJ-9"], h.deps), 1);
+  assert.match(h.out.join(""), /Done: 1 downloaded, 1 failed\./);
+});
+
+test("an unreachable Jira says how many files are left and how to get them", async () => {
+  const h = harness({
+    details: detailsWith([
+      attachment({
+        id: "1",
+        filename: "a.png",
+        content: "https://jira.test/x/a",
+      }),
+      attachment({
+        id: "2",
+        filename: "b.png",
+        content: "https://jira.test/x/b",
+      }),
+      attachment({
+        id: "3",
+        filename: "c.png",
+        content: "https://jira.test/x/c",
+      }),
+    ]),
+    download: (url) => {
+      if (!url.endsWith("a"))
+        throw new JiraUnreachableError("https://jira.test", new Error("boom"));
+      return new Uint8Array([1]);
+    },
+  });
+  assert.equal(await runDownloadCommand(["PROJ-9"], h.deps), 3);
+  assert.match(
+    h.err.join(""),
+    /2 of 3 not downloaded — run the same command again/,
+  );
+});
+
+test("on a real disk the file lands under its own name, with no .part left behind", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "jira-cli-dl-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const h = harness({
+    details: detailsWith([
+      attachment({
+        filename: "a.txt",
+        size: 3,
+        content: "https://jira.test/x/a",
+      }),
+    ]),
+  });
+  // The real writer and size check, not the in-memory ones.
+  const { writeFile: _w, fileSize: _s, mkdirp: _m, ...deps } = h.deps;
+  assert.equal(await runDownloadCommand(["PROJ-9", "--out", dir], deps), 0);
+  assert.deepEqual(readdirSync(dir), ["a.txt"]);
+  assert.deepEqual([...readFileSync(join(dir, "a.txt"))], [1, 2, 3]);
+  // Run again: the file is complete, so nothing is fetched.
+  assert.equal(await runDownloadCommand(["PROJ-9", "--out", dir], deps), 0);
+  assert.equal(h.fetched.length, 1);
 });
