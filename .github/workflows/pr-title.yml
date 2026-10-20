@@ -31,6 +31,7 @@ jobs:
         jira
         login
         prompt
+        retry
         search
         session
         deps

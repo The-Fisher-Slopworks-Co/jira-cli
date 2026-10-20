@@ -9,6 +9,7 @@ import {
   makeJiraAuth,
   reportJiraFailure,
   resolveSession,
+  retryNotice,
   withReauth,
   type JiraApi,
   type JiraAuth,
@@ -101,7 +102,7 @@ export async function runSearchCommand(
     return 2;
   }
 
-  const jira = deps.jira ?? makeJira();
+  const jira = deps.jira ?? makeJira(undefined, { onRetry: retryNotice(err) });
   // Signs in from the saved keychain credentials when there's no session, so an
   // expired session doesn't dead-end an agent on `jira login` (as in `jira issue`).
   const auth =
