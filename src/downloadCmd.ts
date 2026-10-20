@@ -8,8 +8,11 @@ import { join } from "node:path";
 import { makeCredentialStore, type CredentialStore } from "./credentials.js";
 import {
   JiraAuthError,
+  JiraUnreachableError,
   makeJira,
   makeJiraAuth,
+  reportJiraFailure,
+  resolveSession,
   withReauth,
   type JiraApi,
   type JiraAttachment,
@@ -42,8 +45,9 @@ const USAGE = "Usage: jira download <KEY> [--out <dir>]\n";
  * `jira issue`), fetches the issue's attachment list, and writes every attachment
  * to `--out` (the current directory by default), replaying the session cookie.
  * Returns a process exit code: 0 on success (including an issue with no
- * attachments), 2 on a usage error, 1 on any other failure (no session, expired
- * session, issue not found, or a download/write error). Never throws.
+ * attachments), 2 on a usage error, 3 when Jira can't be reached, 1 on any other
+ * failure (no session, expired session, issue not found, or a download/write
+ * error). Never throws.
  */
 export async function runDownloadCommand(
   argv: string[],
@@ -92,7 +96,8 @@ export async function runDownloadCommand(
   // expired session doesn't dead-end an agent on `jira login` (as in `jira issue`).
   const auth =
     deps.auth ?? makeJiraAuth(jira, deps.store ?? makeCredentialStore());
-  const session = await auth.session().catch(() => null);
+  const session = await resolveSession(auth, err);
+  if (typeof session === "number") return session;
   if (session == null) {
     err("jira: no Jira session — run `jira login` first.\n");
     return 1;
@@ -105,14 +110,7 @@ export async function runDownloadCommand(
       jira.fetchIssueDetails(s, key),
     );
   } catch (e) {
-    if (e instanceof JiraAuthError) {
-      err(
-        "jira: Jira session expired and saved credentials no longer work — run `jira login`.\n",
-      );
-      return 1;
-    }
-    err(`jira: ${e instanceof Error ? e.message : String(e)}\n`);
-    return 1;
+    return reportJiraFailure(e, err);
   }
   if (details == null) {
     err(`jira: issue ${key} not found, or you don't have access.\n`);
@@ -159,13 +157,10 @@ export async function runDownloadCommand(
       const size = formatBytes(a.size ?? bytes.byteLength);
       out(`  ${dest}  (${size})\n`);
     } catch (e) {
-      // An unrecoverable expired session affects every remaining file, so stop.
-      if (e instanceof JiraAuthError) {
-        err(
-          "jira: Jira session expired and saved credentials no longer work — run `jira login`.\n",
-        );
-        return 1;
-      }
+      // An unrecoverable expired session or an unreachable Jira affects every
+      // remaining file, so stop.
+      if (e instanceof JiraAuthError || e instanceof JiraUnreachableError)
+        return reportJiraFailure(e, err);
       failures++;
       err(
         `  failed: ${a.filename ?? name}: ${e instanceof Error ? e.message : String(e)}\n`,

@@ -7,7 +7,11 @@ import test from "node:test";
 
 import { CancelError } from "./cancel.js";
 import type { CredentialStore, JiraCredentials } from "./credentials.js";
-import type { JiraApi, JiraSession } from "./jira.js";
+import {
+  JiraUnreachableError,
+  type JiraApi,
+  type JiraSession,
+} from "./jira.js";
 import { runLoginCommand } from "./login.js";
 import type { AskOptions, Prompter } from "./prompt.js";
 
@@ -310,4 +314,30 @@ test("interrupting a prompt exits 130 and closes the prompter", async () => {
   assert.equal(code, 130);
   assert.deepEqual(jira.logins, []);
   assert.ok(prompt.isClosed());
+});
+
+test("an unreachable Jira exits 3 without asking for a password it can't use", async () => {
+  const jira = fakeJira({
+    loginError: new JiraUnreachableError(
+      "https://jira.test",
+      new Error("boom"),
+    ),
+  });
+  const prompt = scriptedPrompter();
+  const errors: string[] = [];
+
+  const code = await runLoginCommand({
+    jira: jira.api,
+    store: fakeStore({
+      baseUrl: "https://jira.test",
+      username: "alice",
+      password: "secret",
+    }).api,
+    prompt: prompt.api,
+    err: (s) => void errors.push(s),
+  });
+
+  assert.equal(code, 3);
+  assert.match(errors.join(""), /could not reach jira\.test/);
+  assert.deepEqual(prompt.asked, []); // no fall-through to the interactive path
 });

@@ -29,7 +29,8 @@ if (mode == null || mode === "help" || mode === "--help" || mode === "-h") {
 
 // Every command returns its own exit code and never throws: `issue` and
 // `download` write plain text to stdout so a pipe or an agent can read them,
-// `login` prompts. 0 success, 2 usage error, 130 interrupted, 1 anything else.
+// `login` prompts. 0 success, 2 usage error, 3 Jira unreachable, 130
+// interrupted, 1 anything else.
 if (mode === "issue") {
   process.exit(await runIssueCommand(process.argv.slice(3)));
 }

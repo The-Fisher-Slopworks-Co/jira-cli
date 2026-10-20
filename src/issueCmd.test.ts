@@ -8,6 +8,7 @@ import test, { type TestContext } from "node:test";
 import type { CredentialStore, JiraCredentials } from "./credentials.js";
 import {
   JiraAuthError,
+  JiraUnreachableError,
   type JiraApi,
   type JiraIssueDetails,
   type JiraSession,
@@ -51,6 +52,8 @@ function harness(
     freshCookie?: string;
     /** Saved keychain credentials, for the transparent-login paths. Default: none. */
     creds?: JiraCredentials | null;
+    /** When set, a sign-in rejects with this. */
+    loginError?: unknown;
   } = {},
 ) {
   const out: string[] = [];
@@ -62,6 +65,7 @@ function harness(
       opts.session === undefined ? SESSION : opts.session,
     login: async (baseUrl, username, password) => {
       logins.push({ baseUrl, username, password });
+      if (opts.loginError !== undefined) throw opts.loginError;
       return { baseUrl, cookie: opts.freshCookie ?? "x" };
     },
     fetchIssueDetails: async (session, key) => {
@@ -172,4 +176,30 @@ test("a missing issue (null) exits 1", async () => {
   const h = harness({ details: null });
   assert.equal(await runIssueCommand(["PROJ-9"], h.deps), 1);
   assert.match(h.err.join(""), /not found/);
+});
+
+test("an unreachable Jira exits 3 and says so, not 'not found'", async () => {
+  const h = harness({
+    fetchError: new JiraUnreachableError(
+      "https://jira.test",
+      new Error("boom"),
+    ),
+  });
+  assert.equal(await runIssueCommand(["PROJ-9"], h.deps), 3);
+  assert.match(h.err.join(""), /could not reach jira\.test.*VPN/);
+  assert.doesNotMatch(h.err.join(""), /not found/);
+});
+
+test("a sign-in that can't reach Jira exits 3 instead of pointing at jira login", async () => {
+  const h = harness({
+    session: null,
+    creds: CREDS,
+    loginError: new JiraUnreachableError(
+      "https://jira.test",
+      new Error("boom"),
+    ),
+  });
+  assert.equal(await runIssueCommand(["PROJ-9"], h.deps), 3);
+  assert.match(h.err.join(""), /could not reach jira\.test/);
+  assert.doesNotMatch(h.err.join(""), /jira login/);
 });

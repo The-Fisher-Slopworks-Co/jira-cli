@@ -9,6 +9,7 @@ import type { CredentialStore, JiraCredentials } from "./credentials.js";
 import {
   DEFAULT_SEARCH_LIMIT,
   JiraAuthError,
+  JiraUnreachableError,
   type JiraApi,
   type JiraSearchOptions,
   type JiraSearchResults,
@@ -212,4 +213,15 @@ test("an expired session re-authenticates from saved credentials and succeeds", 
   assert.equal(await runSearchCommand(["project = PROJ"], h.deps), 0);
   assert.deepEqual(h.logins, [CREDS]);
   assert.match(h.out.join(""), /Rate limiter/);
+});
+
+test("an unreachable Jira exits 3", async () => {
+  const h = harness({
+    searchError: new JiraUnreachableError(
+      "https://jira.test",
+      new Error("boom"),
+    ),
+  });
+  assert.equal(await runSearchCommand(["project = PROJ"], h.deps), 3);
+  assert.match(h.err.join(""), /could not reach jira\.test/);
 });
