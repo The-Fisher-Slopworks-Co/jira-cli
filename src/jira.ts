@@ -185,7 +185,8 @@ export interface JiraApi {
    * {@link JiraAttachment.content}), replaying the session cookie. Throws
    * {@link JiraAuthError} on a 401 so the caller can recover via
    * {@link withReauth}, {@link JiraUnreachableError} when Jira can't be reached,
-   * and a plain `Error` with a human-readable message on any other non-2xx.
+   * and a plain `Error` with a human-readable message on any other non-2xx. A
+   * connection that drops part-way is resumed from where it stopped.
    */
   downloadAttachment(session: JiraSession, url: string): Promise<Uint8Array>;
 }
@@ -360,21 +361,42 @@ export function makeJira(
       // The attachment `content` URL is absolute, so `request` passes it through
       // untouched while still replaying the session cookie. Ask for any content
       // type (not the default JSON), and time out on silence, not on size.
+      // What earlier attempts received is kept, so a retry after a drop asks
+      // for the rest with a Range request instead of starting over.
+      const received: Received = { chunks: [], size: 0 };
       return retry(async () => {
         const idle = idleTimeout(idleMs);
         try {
+          const headers: Record<string, string> = { Accept: "*/*" };
+          if (received.size > 0) headers.Range = `bytes=${received.size}-`;
           const res = await client.request(session, url, {
-            headers: { Accept: "*/*" },
+            headers,
             signal: idle.signal,
           });
           if (res.status === 401)
             throw new JiraAuthError("Jira session expired");
+          // A 416 says the range no longer fits the file: start from scratch.
+          if (res.status === 416) {
+            received.chunks = [];
+            received.size = 0;
+            throw new TransientStatusError(
+              "Jira refused to resume the attachment",
+            );
+          }
           const status = `Jira returned HTTP ${res.status} for the attachment`;
           if (isTransientStatus(res.status)) throw transient(res, status);
           if (!res.ok) throw new Error(status);
-          return await readBody(url, "the attachment", () =>
-            readAll(res, idle.reset),
+          if (res.status !== 206) {
+            // A 200 is the whole file again: the server ignored the range.
+            received.chunks = [];
+            received.size = 0;
+          } else if (rangeStart(res) !== received.size) {
+            throw new Error("Jira resumed the attachment at the wrong offset");
+          }
+          await readBody(url, "the attachment", () =>
+            readInto(res, received, idle.reset),
           );
+          return concat(received);
         } finally {
           idle.clear();
         }
@@ -440,29 +462,44 @@ function idleTimeout(ms: number): {
   return { signal: controller.signal, reset, clear };
 }
 
-/** Read a whole body, calling `onChunk` as each piece arrives. */
-async function readAll(
+/** The bytes of a download so far, across attempts. */
+interface Received {
+  chunks: Uint8Array[];
+  size: number;
+}
+
+/** Append a body to `received`, calling `onChunk` as each piece arrives. */
+async function readInto(
   res: Response,
+  received: Received,
   onChunk: () => void,
-): Promise<Uint8Array> {
-  if (res.body == null) return new Uint8Array();
+): Promise<void> {
+  if (res.body == null) return;
   const reader = res.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
   for (;;) {
     const { done, value } = await reader.read();
-    if (done) break;
+    if (done) return;
     onChunk();
-    chunks.push(value);
-    size += value.byteLength;
+    received.chunks.push(value);
+    received.size += value.byteLength;
   }
-  const bytes = new Uint8Array(size);
+}
+
+/** The bytes of `received` as one array. */
+function concat(received: Received): Uint8Array {
+  const bytes = new Uint8Array(received.size);
   let offset = 0;
-  for (const chunk of chunks) {
+  for (const chunk of received.chunks) {
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
   return bytes;
+}
+
+/** Where a 206's `Content-Range` (`bytes 100-999/1000`) starts, or `null`. */
+function rangeStart(res: Response): number | null {
+  const match = /^bytes (\d+)-/.exec(res.headers.get("Content-Range") ?? "");
+  return match?.[1] == null ? null : Number(match[1]);
 }
 
 /** The URL a `fetch` call was made with, whatever form it took. */

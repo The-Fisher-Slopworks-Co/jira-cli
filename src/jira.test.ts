@@ -873,3 +873,44 @@ test("a download that goes silent times out early; a slow but steady one doesn't
   const bytes = await jira.downloadAttachment(session, `${base}/steady`);
   assert.equal(new TextDecoder().decode(bytes), "yyyyy");
 });
+
+test("a download dropped mid-file resumes with a Range request", async (t: TestContext) => {
+  isolateConfig(t);
+  const ranges: (string | undefined)[] = [];
+  const base = await listen(t, (req, res) => {
+    ranges.push(req.headers.range);
+    if (req.headers.range == null) {
+      res.writeHead(200, { "Content-Length": "10" });
+      res.write("hello");
+      setTimeout(() => req.socket.destroy(), 20);
+      return;
+    }
+    res.writeHead(206, { "Content-Range": "bytes 5-9/10" });
+    res.end("world");
+  });
+  const bytes = await testJira().downloadAttachment(
+    { baseUrl: base, cookie: "JSESSIONID=x" },
+    `${base}/secure/attachment/5/a`,
+  );
+  assert.equal(new TextDecoder().decode(bytes), "helloworld");
+  assert.deepEqual(ranges, [undefined, "bytes=5-"]);
+});
+
+test("a server that ignores the Range gets the whole file, not a duplicate", async (t: TestContext) => {
+  isolateConfig(t);
+  let requests = 0;
+  const base = await listen(t, (req, res) => {
+    res.writeHead(200, { "Content-Length": "10" });
+    if (++requests === 1) {
+      res.write("hello");
+      setTimeout(() => req.socket.destroy(), 20);
+      return;
+    }
+    res.end("helloworld");
+  });
+  const bytes = await testJira().downloadAttachment(
+    { baseUrl: base, cookie: "JSESSIONID=x" },
+    `${base}/secure/attachment/5/a`,
+  );
+  assert.equal(new TextDecoder().decode(bytes), "helloworld");
+});
