@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rename, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { makeCredentialStore, type CredentialStore } from "./credentials.js";
@@ -34,17 +34,28 @@ export interface DownloadCmdDeps {
   err?: (s: string) => void;
   /** Create the output directory (and parents). Defaults to `fs.mkdir({ recursive })`. */
   mkdirp?: (dir: string) => Promise<void>;
-  /** Write one file's bytes. Defaults to `fs.writeFile`. */
+  /** Write one file's bytes. Defaults to {@link writeFileAtomic}. */
   writeFile?: (path: string, data: Uint8Array) => Promise<void>;
+  /** Size of an existing file, or `null` if there is none. Defaults to `fs.stat`. */
+  fileSize?: (path: string) => Promise<number | null>;
 }
 
-const USAGE = "Usage: jira download <KEY> [--out <dir>]\n";
+const USAGE = `Usage: jira download <KEY> [--out <dir>] [--force]
+
+A file already in <dir> with the attachment's name and size is kept, so after
+an interrupted run the same command fetches only what is missing.
+
+  --out <dir>  where to write (default: the current directory)
+  --force      download every attachment again, even the ones already there
+`;
 
 /**
  * Run `jira download <KEY>` — the non-interactive attachment downloader. Loads the
  * saved Jira session (signing in / refreshing from the keychain exactly like
  * `jira issue`), fetches the issue's attachment list, and writes every attachment
  * to `--out` (the current directory by default), replaying the session cookie.
+ * An attachment already there with the same name and size is kept unless
+ * `--force`, so re-running after an interruption fetches only what's missing.
  * Returns a process exit code: 0 on success (including an issue with no
  * attachments), 2 on a usage error, 3 when Jira can't be reached, 1 on any other
  * failure (no session, expired session, issue not found, or a download/write
@@ -59,10 +70,18 @@ export async function runDownloadCommand(
   const mkdirp =
     deps.mkdirp ??
     (async (dir) => void (await mkdir(dir, { recursive: true })));
-  const write = deps.writeFile ?? ((path, data) => writeFile(path, data));
+  const write = deps.writeFile ?? writeFileAtomic;
+  const fileSize =
+    deps.fileSize ??
+    ((path) =>
+      stat(path).then(
+        (s) => s.size,
+        () => null,
+      ));
 
   // Parse: one positional KEY, plus --out/-o <dir> (or --out=<dir>).
   let outDir = ".";
+  let force = false;
   const positional: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -78,6 +97,8 @@ export async function runDownloadCommand(
         return 2;
       }
       outDir = value;
+    } else if (arg === "--force" || arg === "-f") {
+      force = true;
     } else if (arg.startsWith("--out=")) {
       outDir = arg.slice("--out=".length);
     } else {
@@ -143,33 +164,76 @@ export async function runDownloadCommand(
   // Track names used this run so two attachments with the same filename don't
   // clobber each other (Jira allows duplicate names on one issue).
   const used = new Set<string>();
-  let failures = 0;
+  const tally: Tally = { downloaded: 0, kept: 0, failed: 0 };
   for (const [i, a] of attachments.entries()) {
     const name = uniqueName(
       safeFilename(a.filename, `attachment-${a.id ?? i + 1}`),
       used,
     );
     const dest = join(outDir, name);
+    // Same name and size as Jira reports: a previous run already got it.
+    if (!force && a.size != null && (await fileSize(dest)) === a.size) {
+      tally.kept++;
+      out(`  ${dest}  (${formatBytes(a.size)}, already there)\n`);
+      continue;
+    }
     try {
       const bytes = await withReauth(auth, session, (s) =>
         jira.downloadAttachment(s, a.content),
       );
       await write(dest, bytes);
+      tally.downloaded++;
       const size = formatBytes(a.size ?? bytes.byteLength);
       out(`  ${dest}  (${size})\n`);
     } catch (e) {
       // An unrecoverable expired session or an unreachable Jira affects every
       // remaining file, so stop.
-      if (e instanceof JiraAuthError || e instanceof JiraUnreachableError)
-        return reportJiraFailure(e, err);
-      failures++;
+      if (e instanceof JiraAuthError || e instanceof JiraUnreachableError) {
+        const code = reportJiraFailure(e, err);
+        const rest = attachments.length - tally.downloaded - tally.kept;
+        err(
+          `jira: ${rest} of ${attachments.length} not downloaded — run the same command again to fetch the rest.\n`,
+        );
+        return code;
+      }
+      tally.failed++;
       err(
         `  failed: ${a.filename ?? name}: ${e instanceof Error ? e.message : String(e)}\n`,
       );
     }
   }
 
-  return failures > 0 ? 1 : 0;
+  out(`${summary(tally)}\n`);
+  return tally.failed > 0 ? 1 : 0;
+}
+
+/** What one run did with each attachment. */
+interface Tally {
+  downloaded: number;
+  /** Already in the output directory from an earlier run. */
+  kept: number;
+  failed: number;
+}
+
+/** The closing line: `Done: 2 downloaded, 1 already there, 1 failed.` */
+function summary(tally: Tally): string {
+  const parts = [
+    `${tally.downloaded} downloaded`,
+    tally.kept > 0 ? `${tally.kept} already there` : null,
+    tally.failed > 0 ? `${tally.failed} failed` : null,
+  ].filter((p) => p != null);
+  return `Done: ${parts.join(", ")}.`;
+}
+
+/**
+ * Write `data` to `path` through a `.part` file renamed into place, so a run cut
+ * short never leaves a truncated file under the real name — one that the next
+ * run would take for a finished download.
+ */
+async function writeFileAtomic(path: string, data: Uint8Array): Promise<void> {
+  const part = `${path}.part`;
+  await writeFile(part, data);
+  await rename(part, path);
 }
 
 /**

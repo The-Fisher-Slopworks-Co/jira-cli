@@ -37,6 +37,16 @@ row per issue, the linked issues underneath, and how much of the result set that
 was. `--json` adds components, labels and fix versions; `--limit` and `--start`
 page through the rest.
 
+`jira download` keeps a file that is already there with the attachment's name
+and size, so after an interrupted run the same command fetches only what is
+missing; `--force` downloads everything again.
+
+On a flaky connection, such as a corporate VPN, every request retries a dropped
+connection, a timeout or a 429/502–504 a few times before giving up, and a
+download that drops part-way resumes where it stopped. If Jira still can't be
+reached, the command says so and exits `3` (rather than `1`), so a script can
+tell "try again later" from "no such issue".
+
 ## Development
 
 Needs [uv](https://docs.astral.sh/uv/) as well, for the REUSE check.

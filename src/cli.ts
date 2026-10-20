@@ -15,7 +15,8 @@ Usage:
                        (add --json for the raw issue object)
   jira search <JQL>    find issues by JQL, one row each
                        (--json for every field, --limit / --start to page)
-  jira download <KEY>  download an issue's attachments (--out <dir> to choose where)
+  jira download <KEY>  download an issue's attachments (--out <dir> to choose where,
+                       --force to fetch again the ones already there)
   jira login           sign in to Jira (refreshes the saved session)
   jira help            show this help
 `;
