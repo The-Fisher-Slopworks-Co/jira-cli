@@ -6,6 +6,9 @@ import {
   DETAIL_ISSUE_FIELDS,
   JiraAuthError,
   JiraClient,
+  JiraError,
+  issuePath,
+  parseIssue,
   type JiraAttachment,
   type JiraComment,
   type JiraSession,
@@ -20,6 +23,22 @@ import { makeSessionStore, type SessionStore } from "./session.js";
 // this one module.
 export type { JiraAttachment, JiraComment, JiraSession, JiraSubtask };
 export { JiraAuthError };
+
+/**
+ * Jira could not be reached: the connection was refused, dropped mid-response
+ * or timed out, or the host did not resolve. Kept apart from "not found" and
+ * from a rejected sign-in because the remedy is different — the network, often
+ * a corporate VPN, rather than the key or the password.
+ */
+export class JiraUnreachableError extends Error {
+  constructor(url: string, cause: unknown) {
+    super(
+      `could not reach ${hostOf(url)} (${networkReason(cause)}) — check your network or VPN`,
+      { cause },
+    );
+    this.name = "JiraUnreachableError";
+  }
+}
 
 /**
  * The issue body the CLI prints: header facts plus description, subtasks,
@@ -111,8 +130,9 @@ export interface JiraApi {
   /** The persisted session, or `null` if there isn't one. */
   loadSession(): Promise<JiraSession | null>;
   /**
-   * Authenticate and persist the resulting session. Throws with a human-readable
-   * message on bad credentials, a non-Server instance, or a network failure.
+   * Authenticate and persist the resulting session. Throws
+   * {@link JiraUnreachableError} when Jira can't be reached, and an error with a
+   * human-readable message on bad credentials or a non-Server instance.
    */
   login(
     baseUrl: string,
@@ -120,9 +140,11 @@ export interface JiraApi {
     password: string,
   ): Promise<JiraSession>;
   /**
-   * Fetch an issue's full body for display. Returns `null` on a recoverable
-   * failure (not found, network, timeout, unparseable). Throws
-   * {@link JiraAuthError} on a 401 so the caller can re-authenticate.
+   * Fetch an issue's full body for display. Returns `null` when Jira says the
+   * issue does not exist or is not visible to you (404 / 403). Throws
+   * {@link JiraAuthError} on a 401 so the caller can re-authenticate,
+   * {@link JiraUnreachableError} when Jira can't be reached, and a plain `Error`
+   * on any other failure — a network drop must never read as "not found".
    */
   fetchIssueDetails(
     session: JiraSession,
@@ -136,8 +158,8 @@ export interface JiraApi {
    * `null` on a recoverable failure: a rejected query is the normal way to get a
    * typo wrong, and Jira's own explanation ("Field 'foo' does not exist…") is
    * worth far more to the caller than an empty result would be. Throws
-   * {@link JiraAuthError} on a 401, and a plain `Error` carrying Jira's message
-   * on anything else.
+   * {@link JiraAuthError} on a 401, {@link JiraUnreachableError} when Jira can't
+   * be reached, and a plain `Error` carrying Jira's message on anything else.
    */
   searchIssues(
     session: JiraSession,
@@ -148,8 +170,8 @@ export interface JiraApi {
    * Download an attachment's bytes from its absolute `content` URL (the value on
    * {@link JiraAttachment.content}), replaying the session cookie. Throws
    * {@link JiraAuthError} on a 401 so the caller can recover via
-   * {@link withReauth}, and a plain `Error` with a human-readable message on any
-   * other failure (non-2xx, network, timeout).
+   * {@link withReauth}, {@link JiraUnreachableError} when Jira can't be reached,
+   * and a plain `Error` with a human-readable message on any other non-2xx.
    */
   downloadAttachment(session: JiraSession, url: string): Promise<Uint8Array>;
 }
@@ -196,28 +218,58 @@ const SEARCH_FIELDS = [
  * swap in an in-memory one.
  */
 export function makeJira(sessions: SessionStore = makeSessionStore()): JiraApi {
-  const client = new JiraClient();
+  // Every transport failure surfaces as a JiraUnreachableError straight from
+  // fetch, so `request` callers see it as is. The library's `login` folds it
+  // into a status-less JiraError, so the last one is also kept for `login` to
+  // recover.
+  let lastUnreachable: JiraUnreachableError | null = null;
+  const client = new JiraClient({
+    fetch: (async (input: string | URL | Request, init?: RequestInit) => {
+      try {
+        return await fetch(input, init);
+      } catch (err) {
+        lastUnreachable = new JiraUnreachableError(urlOf(input), err);
+        throw lastUnreachable;
+      }
+    }) as typeof fetch,
+  });
   return {
     loadSession: () => sessions.load(),
     async login(baseUrl, username, password) {
+      lastUnreachable = null;
+      let session: JiraSession;
+      try {
+        session = await client.login(baseUrl, username, password);
+      } catch (err) {
+        // Every other login failure carries the HTTP status it came from.
+        if (
+          lastUnreachable != null &&
+          err instanceof JiraError &&
+          err.status === undefined
+        )
+          throw lastUnreachable;
+        throw err;
+      }
       // The library returns the session and stores nothing; persisting it is
       // this layer's job (see session.ts).
-      const session = await client.login(baseUrl, username, password);
       await sessions.save(session);
       return session;
     },
     async fetchIssueDetails(session, key) {
-      // getIssue throws JiraAuthError on 401 and returns null on every other
-      // recoverable failure — exactly this contract. Re-word the 401 so the
-      // "session expired" wording is consistent wherever it surfaces.
-      const issue = await client
-        .getIssue(session, key, { fields: DETAIL_ISSUE_FIELDS })
-        .catch((err: unknown) => {
-          if (err instanceof JiraAuthError)
-            throw new JiraAuthError("Jira session expired");
-          throw err;
-        });
-      if (issue == null) return null;
+      // `request`, not `getIssue`: the library's best-effort getIssue folds a
+      // network failure into the same `null` as a missing issue.
+      const res = await client.request(
+        session,
+        issuePath(key, DETAIL_ISSUE_FIELDS),
+      );
+      if (res.status === 401) throw new JiraAuthError("Jira session expired");
+      // Jira answers 404 both for an unknown key and for one you can't see.
+      if (res.status === 404 || res.status === 403) return null;
+      if (!res.ok)
+        throw new Error(`Jira returned HTTP ${res.status} for ${key}`);
+      const issue = parseIssue(
+        await readBody(session.baseUrl, `issue ${key}`, () => res.json()),
+      );
       return {
         key: issue.key ?? key,
         summary: issue.summary,
@@ -235,56 +287,37 @@ export function makeJira(sessions: SessionStore = makeSessionStore()): JiraApi {
       // POST, not GET: a real JQL query with quoted values and a sort clause is
       // long, and `request` passes the method and body straight through. Also
       // carries its own timeout, since `getJson` would impose the small-JSON one.
-      let res: Response;
-      try {
-        res = await client.request(session, "/rest/api/2/search", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            jql,
-            startAt: options.startAt ?? 0,
-            maxResults: options.maxResults ?? DEFAULT_SEARCH_LIMIT,
-            fields: SEARCH_FIELDS,
-          }),
-          signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
-        });
-      } catch (err) {
-        throw new Error(`could not reach Jira: ${errMessage(err)}`, {
-          cause: err,
-        });
-      }
+      const res = await client.request(session, "/rest/api/2/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jql,
+          startAt: options.startAt ?? 0,
+          maxResults: options.maxResults ?? DEFAULT_SEARCH_LIMIT,
+          fields: SEARCH_FIELDS,
+        }),
+        signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
+      });
       if (res.status === 401) throw new JiraAuthError("Jira session expired");
       if (!res.ok) throw new Error(await searchErrorMessage(res));
-      let body: unknown;
-      try {
-        body = await res.json();
-      } catch (err) {
-        throw new Error(
-          `could not parse Jira's search response: ${errMessage(err)}`,
-          { cause: err },
-        );
-      }
-      return parseSearchResults(body);
+      return parseSearchResults(
+        await readBody(session.baseUrl, "the search", () => res.json()),
+      );
     },
     async downloadAttachment(session, url) {
       // The attachment `content` URL is absolute, so `request` passes it through
       // untouched while still replaying the session cookie. Ask for any content
       // type (not the default JSON) and use the longer attachment timeout.
-      let res: Response;
-      try {
-        res = await client.request(session, url, {
-          headers: { Accept: "*/*" },
-          signal: AbortSignal.timeout(ATTACHMENT_TIMEOUT_MS),
-        });
-      } catch (err) {
-        throw new Error(`could not download attachment: ${errMessage(err)}`, {
-          cause: err,
-        });
-      }
+      const res = await client.request(session, url, {
+        headers: { Accept: "*/*" },
+        signal: AbortSignal.timeout(ATTACHMENT_TIMEOUT_MS),
+      });
       if (res.status === 401) throw new JiraAuthError("Jira session expired");
       if (!res.ok)
         throw new Error(`Jira returned HTTP ${res.status} for the attachment`);
-      return new Uint8Array(await res.arrayBuffer());
+      return new Uint8Array(
+        await readBody(url, "the attachment", () => res.arrayBuffer()),
+      );
     },
   };
 }
@@ -292,6 +325,70 @@ export function makeJira(sessions: SessionStore = makeSessionStore()): JiraApi {
 /** Message of an unknown thrown value, for the error strings above. */
 function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Read a response body. Headers can arrive before a connection drops, so a
+ * failure here is still the network's — unless the bytes arrived and just
+ * aren't JSON, which says the response itself was wrong.
+ */
+async function readBody<T>(
+  url: string,
+  what: string,
+  read: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await read();
+  } catch (err) {
+    if (err instanceof SyntaxError)
+      throw new Error(`could not parse Jira's response for ${what}`, {
+        cause: err,
+      });
+    throw new JiraUnreachableError(url, err);
+  }
+}
+
+/** The URL a `fetch` call was made with, whatever form it took. */
+function urlOf(input: string | URL | Request): string {
+  if (typeof input === "string") return input;
+  return input instanceof URL ? input.href : input.url;
+}
+
+/** The host part of `url`, or `url` itself when it doesn't parse. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * A short reason for a transport failure. Bun and Node spell the same failure
+ * differently (`ConnectionRefused` vs `ECONNREFUSED`), and undici hides the code
+ * one `cause` deeper, so look at the whole chain.
+ */
+function networkReason(err: unknown): string {
+  for (let e: unknown = err; e instanceof Error; e = e.cause) {
+    if (e.name === "TimeoutError") return "timed out";
+    const code = (e as { code?: unknown }).code;
+    switch (code) {
+      case "ConnectionRefused":
+      case "ECONNREFUSED":
+        return "connection refused";
+      case "ECONNRESET":
+      case "EPIPE":
+      case "UND_ERR_SOCKET":
+        return "connection dropped";
+      case "ENOTFOUND":
+      case "EAI_AGAIN":
+        return "host not found";
+      case "ETIMEDOUT":
+      case "UND_ERR_CONNECT_TIMEOUT":
+        return "timed out";
+    }
+  }
+  return errMessage(err);
 }
 
 /**
