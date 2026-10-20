@@ -17,6 +17,7 @@ import test, { type TestContext } from "node:test";
 import type { CredentialStore, JiraCredentials } from "./credentials.js";
 import {
   JiraAuthError,
+  JiraUnreachableError,
   makeJira,
   makeJiraAuth,
   parseSearchResults,
@@ -90,6 +91,15 @@ function isolateConfig(t: TestContext): void {
     if (prevUrl === undefined) delete process.env.JIRA_URL;
     else process.env.JIRA_URL = prevUrl;
   });
+}
+
+/** A base URL on a port nothing listens on, so every connection is refused. */
+async function closedPort(): Promise<string> {
+  const server = createServer();
+  await new Promise<void>((resolve) => server.listen(0, () => resolve()));
+  const { port } = server.address() as AddressInfo;
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  return `http://127.0.0.1:${port}`;
 }
 
 /** Start a throwaway HTTP server on a random port; returns its base URL. */
@@ -673,4 +683,56 @@ test("withReauth passes through a non-auth error without re-authenticating", asy
     /network boom/,
   );
   assert.equal(s.logins, 0);
+});
+
+test("an unreachable Jira is reported as such by every call, never as not found", async (t: TestContext) => {
+  isolateConfig(t);
+  const base = await closedPort();
+  const session = { baseUrl: base, cookie: "JSESSIONID=x" };
+  const jira = makeJira();
+  const unreachable = (e: unknown) =>
+    e instanceof JiraUnreachableError &&
+    e.message.includes(new URL(base).host) &&
+    /connection refused/.test(e.message) &&
+    /VPN/.test(e.message);
+  await assert.rejects(() => jira.login(base, "alice", "secret"), unreachable);
+  await assert.rejects(
+    () => jira.fetchIssueDetails(session, "PROJ-9"),
+    unreachable,
+  );
+  await assert.rejects(() => jira.searchIssues(session, "x"), unreachable);
+  await assert.rejects(
+    () => jira.downloadAttachment(session, `${base}/secure/attachment/5/a`),
+    unreachable,
+  );
+});
+
+test("a connection dropped mid-body is unreachable, not a parse failure", async (t: TestContext) => {
+  isolateConfig(t);
+  const base = await listen(t, (req, res) => {
+    res.writeHead(200, { "Content-Length": "1000" });
+    res.write("partial");
+    setTimeout(() => req.socket.destroy(), 20);
+  });
+  const session = { baseUrl: base, cookie: "JSESSIONID=x" };
+  await assert.rejects(
+    () =>
+      makeJira().downloadAttachment(session, `${base}/secure/attachment/5/a`),
+    /could not reach .*connection dropped/,
+  );
+});
+
+test("fetchIssueDetails throws on a server error instead of reporting not found", async (t: TestContext) => {
+  isolateConfig(t);
+  const base = await listen(t, (req, res) => {
+    res.statusCode = (req.url ?? "").includes("/HIDDEN-1") ? 403 : 503;
+    res.end("{}");
+  });
+  const session = { baseUrl: base, cookie: "JSESSIONID=x" };
+  const jira = makeJira();
+  await assert.rejects(
+    () => jira.fetchIssueDetails(session, "PROJ-9"),
+    /HTTP 503 for PROJ-9/,
+  );
+  assert.equal(await jira.fetchIssueDetails(session, "HIDDEN-1"), null);
 });
