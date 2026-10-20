@@ -845,3 +845,31 @@ test("a definite answer — 404, 400, 401 — is never retried", async (t: TestC
   assert.equal(requests, 2);
   assert.deepEqual(notices, []);
 });
+
+test("a download that goes silent times out early; a slow but steady one doesn't", async (t: TestContext) => {
+  isolateConfig(t);
+  const base = await listen(t, (req, res) => {
+    res.writeHead(200);
+    if ((req.url ?? "").endsWith("/silent")) {
+      res.write("x"); // then nothing, and the connection stays open
+      return;
+    }
+    // Five chunks 40ms apart: 200ms in all, longer than the idle limit.
+    let sent = 0;
+    const timer = setInterval(() => {
+      res.write("y");
+      if (++sent === 5) {
+        clearInterval(timer);
+        res.end();
+      }
+    }, 40);
+  });
+  const session = { baseUrl: base, cookie: "JSESSIONID=x" };
+  const jira = testJira({ attachmentIdleMs: 120 });
+  await assert.rejects(
+    () => jira.downloadAttachment(session, `${base}/silent`),
+    /timed out/,
+  );
+  const bytes = await jira.downloadAttachment(session, `${base}/steady`);
+  assert.equal(new TextDecoder().decode(bytes), "yyyyy");
+});

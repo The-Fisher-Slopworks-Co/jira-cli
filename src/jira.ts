@@ -191,11 +191,11 @@ export interface JiraApi {
 }
 
 /**
- * Per-download timeout for attachments. Far longer than the library's small-JSON
- * default: an attachment can be many megabytes, so a six-second cap would
- * truncate large files.
+ * How long an attachment download may go without a byte arriving. There is no
+ * cap on the whole download — a large file over a slow VPN is fine as long as it
+ * keeps moving; a connection that went silent is what fails it, and early.
  */
-const ATTACHMENT_TIMEOUT_MS = 60_000;
+const ATTACHMENT_IDLE_MS = 20_000;
 
 /**
  * Per-search timeout. Longer than the library's small-JSON default for the same
@@ -232,6 +232,8 @@ export interface JiraOptions {
   onRetry?: ((message: string) => void) | undefined;
   /** Waits between retries. Defaults to a timer; tests pass one that doesn't. */
   sleep?: RetryOptions["sleep"] | undefined;
+  /** Overrides {@link ATTACHMENT_IDLE_MS}, for tests. */
+  attachmentIdleMs?: number;
 }
 
 /**
@@ -248,6 +250,7 @@ export function makeJira(
   jiraOptions: JiraOptions = {},
 ): JiraApi {
   const { onRetry, sleep } = jiraOptions;
+  const idleMs = jiraOptions.attachmentIdleMs ?? ATTACHMENT_IDLE_MS;
   const retry = <T>(fn: () => Promise<T>): Promise<T> =>
     withRetry(fn, (err) => err instanceof JiraUnreachableError, {
       sleep,
@@ -356,19 +359,25 @@ export function makeJira(
     async downloadAttachment(session, url) {
       // The attachment `content` URL is absolute, so `request` passes it through
       // untouched while still replaying the session cookie. Ask for any content
-      // type (not the default JSON) and use the longer attachment timeout.
+      // type (not the default JSON), and time out on silence, not on size.
       return retry(async () => {
-        const res = await client.request(session, url, {
-          headers: { Accept: "*/*" },
-          signal: AbortSignal.timeout(ATTACHMENT_TIMEOUT_MS),
-        });
-        if (res.status === 401) throw new JiraAuthError("Jira session expired");
-        const status = `Jira returned HTTP ${res.status} for the attachment`;
-        if (isTransientStatus(res.status)) throw transient(res, status);
-        if (!res.ok) throw new Error(status);
-        return new Uint8Array(
-          await readBody(url, "the attachment", () => res.arrayBuffer()),
-        );
+        const idle = idleTimeout(idleMs);
+        try {
+          const res = await client.request(session, url, {
+            headers: { Accept: "*/*" },
+            signal: idle.signal,
+          });
+          if (res.status === 401)
+            throw new JiraAuthError("Jira session expired");
+          const status = `Jira returned HTTP ${res.status} for the attachment`;
+          if (isTransientStatus(res.status)) throw transient(res, status);
+          if (!res.ok) throw new Error(status);
+          return await readBody(url, "the attachment", () =>
+            readAll(res, idle.reset),
+          );
+        } finally {
+          idle.clear();
+        }
       });
     },
   };
@@ -403,6 +412,57 @@ async function readBody<T>(
 /** A {@link TransientStatusError} for `res`, keeping its `Retry-After`. */
 function transient(res: Response, message: string): TransientStatusError {
   return new TransientStatusError(message, res.headers.get("Retry-After"));
+}
+
+/**
+ * An abort signal that fires once `ms` pass without a {@link reset} — a timeout
+ * on silence rather than on the whole exchange.
+ */
+function idleTimeout(ms: number): {
+  signal: AbortSignal;
+  reset: () => void;
+  clear: () => void;
+} {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const clear = () => clearTimeout(timer);
+  const reset = () => {
+    clear();
+    timer = setTimeout(
+      () =>
+        controller.abort(
+          new DOMException(`no data for ${ms / 1000}s`, "TimeoutError"),
+        ),
+      ms,
+    );
+  };
+  reset();
+  return { signal: controller.signal, reset, clear };
+}
+
+/** Read a whole body, calling `onChunk` as each piece arrives. */
+async function readAll(
+  res: Response,
+  onChunk: () => void,
+): Promise<Uint8Array> {
+  if (res.body == null) return new Uint8Array();
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    onChunk();
+    chunks.push(value);
+    size += value.byteLength;
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }
 
 /** The URL a `fetch` call was made with, whatever form it took. */
