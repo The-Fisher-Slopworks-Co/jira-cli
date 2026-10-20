@@ -75,7 +75,9 @@ codes. Everything under it is single-purpose:
   `typecheck`; `tsconfig.build.json` emits to `dist/` and excludes them. A new
   compiler option almost always belongs in the base one.
 - The commands never throw: they return a process exit code (`0` / `1`, `2` for
-  usage, `130` interrupted). Keep it that way — the tests assert on the code, not
+  usage, `3` Jira unreachable, `130` interrupted). A network failure must never
+  read as "not found" or "run `jira login`" — `JiraUnreachableError` keeps it
+  apart all the way up. Keep it that way — the tests assert on the code, not
   on exceptions.
 - `prompt.ts` is the only place that touches raw mode, and only for a masked
   answer: plain questions stay in cooked mode so the terminal keeps doing echo,

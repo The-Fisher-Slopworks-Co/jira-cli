@@ -5,9 +5,10 @@
 import { makeCredentialStore, type CredentialStore } from "./credentials.js";
 import {
   DEFAULT_SEARCH_LIMIT,
-  JiraAuthError,
   makeJira,
   makeJiraAuth,
+  reportJiraFailure,
+  resolveSession,
   withReauth,
   type JiraApi,
   type JiraAuth,
@@ -43,8 +44,8 @@ is what runs. Unquoted arguments are joined back together with spaces.
  * issue`), runs the query, and writes either one aligned row per issue or, with
  * `--json`, the whole result page as an object. Returns a process exit code: 0
  * on success (a query that matches nothing is an answer, not a failure), 2 on a
- * usage error, 1 on any other failure (no session, expired session, a query Jira
- * rejected, network). Never throws.
+ * usage error, 3 when Jira can't be reached, 1 on any other failure (no session,
+ * expired session, a query Jira rejected). Never throws.
  */
 export async function runSearchCommand(
   argv: string[],
@@ -105,7 +106,8 @@ export async function runSearchCommand(
   // expired session doesn't dead-end an agent on `jira login` (as in `jira issue`).
   const auth =
     deps.auth ?? makeJiraAuth(jira, deps.store ?? makeCredentialStore());
-  const session = await auth.session().catch(() => null);
+  const session = await resolveSession(auth, err);
+  if (typeof session === "number") return session;
   if (session == null) {
     err("jira: no Jira session — run `jira login` first.\n");
     return 1;
@@ -118,15 +120,7 @@ export async function runSearchCommand(
       jira.searchIssues(s, jql, { startAt, maxResults }),
     );
   } catch (e) {
-    if (e instanceof JiraAuthError) {
-      err(
-        "jira: Jira session expired and saved credentials no longer work — run `jira login`.\n",
-      );
-      return 1;
-    }
-    // Everything else already carries Jira's own explanation of the refusal.
-    err(`jira: ${e instanceof Error ? e.message : String(e)}\n`);
-    return 1;
+    return reportJiraFailure(e, err);
   }
 
   if (json) {

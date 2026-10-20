@@ -16,11 +16,13 @@ import test, { type TestContext } from "node:test";
 
 import type { CredentialStore, JiraCredentials } from "./credentials.js";
 import {
+  EXIT_UNREACHABLE,
   JiraAuthError,
   JiraUnreachableError,
   makeJira,
   makeJiraAuth,
   parseSearchResults,
+  reportJiraFailure,
   withReauth,
   type JiraApi,
   type JiraSession,
@@ -735,4 +737,26 @@ test("fetchIssueDetails throws on a server error instead of reporting not found"
     /HTTP 503 for PROJ-9/,
   );
   assert.equal(await jira.fetchIssueDetails(session, "HIDDEN-1"), null);
+});
+
+test("JiraAuth.session surfaces an unreachable sign-in instead of 'no session'", async () => {
+  const s = stubJira({
+    session: null,
+    loginError: new JiraUnreachableError("https://j", new Error("down")),
+  });
+  const auth = makeJiraAuth(s.jira, stubStore(CREDS));
+  await assert.rejects(() => auth.session(), JiraUnreachableError);
+});
+
+test("reportJiraFailure exits 3 for an unreachable Jira and 1 otherwise", () => {
+  const err: string[] = [];
+  const report = (e: unknown) => reportJiraFailure(e, (s) => void err.push(s));
+  assert.equal(
+    report(new JiraUnreachableError("https://jira.test/x", new Error("x"))),
+    EXIT_UNREACHABLE,
+  );
+  assert.match(err.join(""), /^jira: could not reach jira\.test/);
+  assert.equal(report(new JiraAuthError()), 1);
+  assert.match(err.join(""), /run `jira login`/);
+  assert.equal(report(new Error("HTTP 500")), 1);
 });

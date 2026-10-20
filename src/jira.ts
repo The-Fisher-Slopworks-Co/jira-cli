@@ -25,6 +25,13 @@ export type { JiraAttachment, JiraComment, JiraSession, JiraSubtask };
 export { JiraAuthError };
 
 /**
+ * Exit code for a Jira that could not be reached at all. Distinct from `1` so a
+ * script or an agent can tell "try again once the network is back" from "this
+ * issue does not exist" without parsing stderr.
+ */
+export const EXIT_UNREACHABLE = 3;
+
+/**
  * Jira could not be reached: the connection was refused, dropped mid-response
  * or timed out, or the host did not resolve. Kept apart from "not found" and
  * from a rejected sign-in because the remedy is different — the network, often
@@ -535,7 +542,8 @@ export interface JiraAuth {
   /**
    * A session usable for requests, or `null` when Jira isn't set up at all
    * (no saved session *and* no saved credentials to sign in with — i.e. the
-   * user has never run `jira login`). Memoised, so concurrent and repeat callers
+   * user has never run `jira login`). Throws {@link JiraUnreachableError} when a
+   * needed sign-in can't reach Jira. Memoised, so concurrent and repeat callers
    * share one resolution (and at most one sign-in).
    */
   session(): Promise<JiraSession | null>;
@@ -545,6 +553,7 @@ export interface JiraAuth {
    * Concurrent callers that 401 on the same `stale` session share a single
    * sign-in. Returns `null` when there are no saved credentials to recover with
    * (or they no longer work), in which case the caller surfaces the failure.
+   * Throws {@link JiraUnreachableError} when the sign-in can't reach Jira.
    */
   reauthenticate(stale: JiraSession): Promise<JiraSession | null>;
 }
@@ -569,7 +578,9 @@ export function makeJiraAuth(jira: JiraApi, store?: CredentialStore): JiraAuth {
     }
     try {
       return await jira.login(creds.baseUrl, creds.username, creds.password);
-    } catch {
+    } catch (err) {
+      // A sign-in that never reached Jira says nothing about the credentials.
+      if (err instanceof JiraUnreachableError) throw err;
       // Saved credentials rejected (e.g. password changed). Surface as "no
       // session"; the caller tells the user to run `jira login` again.
       return null;
@@ -629,5 +640,42 @@ export async function withReauth<T>(
       throw err;
     }
     return await fn(fresh);
+  }
+}
+
+/**
+ * Report a failed Jira call on stderr the way every command words it, and return
+ * the exit code to finish with: {@link EXIT_UNREACHABLE} when Jira couldn't be
+ * reached, `1` for anything else.
+ */
+export function reportJiraFailure(
+  e: unknown,
+  err: (s: string) => void,
+): number {
+  if (e instanceof JiraAuthError) {
+    err(
+      "jira: Jira session expired and saved credentials no longer work — run `jira login`.\n",
+    );
+    return 1;
+  }
+  err(`jira: ${errMessage(e)}\n`);
+  return e instanceof JiraUnreachableError ? EXIT_UNREACHABLE : 1;
+}
+
+/**
+ * Resolve the session a command runs with. `null` means there is none to be had
+ * (the caller points at `jira login`); a sign-in that couldn't reach Jira is
+ * reported here instead, and its exit code returned, since `jira login` would
+ * not help.
+ */
+export async function resolveSession(
+  auth: JiraAuth,
+  err: (s: string) => void,
+): Promise<JiraSession | null | number> {
+  try {
+    return await auth.session();
+  } catch (e) {
+    if (e instanceof JiraUnreachableError) return reportJiraFailure(e, err);
+    return null;
   }
 }

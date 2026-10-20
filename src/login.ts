@@ -4,7 +4,12 @@
 
 import { CancelError } from "./cancel.js";
 import { makeCredentialStore, type CredentialStore } from "./credentials.js";
-import { makeJira, type JiraApi } from "./jira.js";
+import {
+  EXIT_UNREACHABLE,
+  JiraUnreachableError,
+  makeJira,
+  type JiraApi,
+} from "./jira.js";
 import { makePrompter, type Prompter } from "./prompt.js";
 
 /** Injectable side effects for {@link runLoginCommand}, so it can be unit-tested. */
@@ -30,8 +35,8 @@ export interface LoginCmdDeps {
  * offers to re-save. Either way the session lands in
  * `$XDG_CONFIG_HOME/jira-cli/session.json`, which is what the other commands read.
  *
- * Returns a process exit code: 0 on success, 1 on a failed sign-in, 130 when the
- * user interrupts. Never throws.
+ * Returns a process exit code: 0 on success, 1 on a failed sign-in, 3 when Jira
+ * can't be reached, 130 when the user interrupts. Never throws.
  */
 export async function runLoginCommand(
   deps: LoginCmdDeps = {},
@@ -52,6 +57,11 @@ export async function runLoginCommand(
         );
         return 0;
       } catch (e) {
+        // Retyping the password can't fix the network.
+        if (e instanceof JiraUnreachableError) {
+          err(`jira: ${message(e)}\n`);
+          return EXIT_UNREACHABLE;
+        }
         // Fall through to an interactive sign-in so the user can recover and
         // re-save, rather than dead-ending on every run.
         prompt.log(`saved credentials failed: ${message(e)}. Sign in again.`);
@@ -76,7 +86,7 @@ export async function runLoginCommand(
       await jira.login(baseUrl, username, password);
     } catch (e) {
       err(`jira: ${message(e)}\n`);
-      return 1;
+      return e instanceof JiraUnreachableError ? EXIT_UNREACHABLE : 1;
     }
     prompt.log(`signed in to ${baseUrl} as ${username}. session saved.`);
 

@@ -8,6 +8,7 @@ import test from "node:test";
 import type { CredentialStore, JiraCredentials } from "./credentials.js";
 import {
   JiraAuthError,
+  JiraUnreachableError,
   type JiraApi,
   type JiraAttachment,
   type JiraIssueDetails,
@@ -305,4 +306,29 @@ test("an expired session re-authenticates from saved credentials and downloads",
   const code = await runDownloadCommand(["PROJ-9"], h.deps);
   assert.equal(code, 0);
   assert.deepEqual([...h.files.keys()], ["a.png"]);
+});
+
+test("an unreachable Jira mid-download stops at once and exits 3", async () => {
+  const fetched: string[] = [];
+  const h = harness({
+    details: detailsWith([
+      attachment({
+        id: "1",
+        filename: "a.png",
+        content: "https://jira.test/x/a",
+      }),
+      attachment({
+        id: "2",
+        filename: "b.png",
+        content: "https://jira.test/x/b",
+      }),
+    ]),
+    download: (url) => {
+      fetched.push(url);
+      throw new JiraUnreachableError("https://jira.test", new Error("boom"));
+    },
+  });
+  assert.equal(await runDownloadCommand(["PROJ-9"], h.deps), 3);
+  assert.deepEqual(fetched, ["https://jira.test/x/a"]); // b is never tried
+  assert.match(h.err.join(""), /could not reach jira\.test/);
 });
